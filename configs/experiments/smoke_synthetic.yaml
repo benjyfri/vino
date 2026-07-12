@@ -1,0 +1,74 @@
+dataset: 
+  dataset: synthetic
+  num_graphs: 50
+  min_nodes: 6
+  max_nodes: 20
+  node_dim: 10
+  edge_dim: 3
+  task_type: binary_classification
+  seed: 42
+image:
+  n_max: 256
+  channels: ["topology", "node_cov", "edge_cov"]
+  final_range: [0, 1]
+  pad_value: 0.0
+  topology:
+    mode: "apsp_heat"
+    sigma: 0.35
+    power: 2.0
+    disconnected_value: 0.0
+    diagonal_value: 1.0
+  canonicalization:
+    mode: "fiedler_apsp"
+    laplacian: "symmetric_normalized"
+    sign_rule: "lexicographic_topology"
+    eigengap_tol: 1.0e-6
+    tie_tol: 1.0e-8
+    lex_round_decimals: 8
+  propagation:
+    operator: "sym_norm_adj_self_loop"
+    powers: [0, 1, 2]
+    weights: [1.0, 0.5, 0.25]
+  node_cov:
+    enabled: true
+    h: 64
+    seed: 123
+    standardize: "per_graph"
+    robust_quantile: 0.95
+    clip: 1.0
+  edge_cov:
+    enabled: true
+    h: 64
+    seed: 456
+    missing_edge_attr: "ones"
+    aggregation: "mean_incident"
+    robust_quantile: 0.95
+    clip: 1.0
+model:
+  backbone_name: "tiny_dummy"
+  backbone_type: "hf_auto"
+  pretrained_path: null
+  freeze_mode: "frozen"
+  pooling: "auto"
+  normalize_lvd_imagenet: true
+  input_adapter:
+    type: "conv1x1"
+  head:
+    type: "binary"
+    hidden_dim: 256
+    dropout: 0.1
+train:
+  task_type: "binary_classification"
+  epochs: 2
+  batch_size: 4
+  lr_head: 1.0e-3
+  lr_backbone: 1.0e-5
+  weight_decay: 1.0e-4
+  amp: false
+  grad_clip: 1.0
+  early_stopping_patience: 10
+  metric_for_best: "val_roc_auc"
+  metric_mode: "max"
+  seed: 42
+  num_workers: 0
+  pos_weight: "auto"

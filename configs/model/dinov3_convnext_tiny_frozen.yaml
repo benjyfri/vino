@@ -1,0 +1,12 @@
+backbone_name: "facebook/dinov3-convnext-tiny-pretrain-lvd1689m"
+backbone_type: "hf_auto"
+pretrained_path: null
+freeze_mode: "frozen"
+pooling: "auto"
+normalize_lvd_imagenet: true
+input_adapter:
+  type: "conv1x1"
+head:
+  type: "binary"
+  hidden_dim: 256
+  dropout: 0.1

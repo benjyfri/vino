@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vino"
+version = "0.1.0"
+description = "VINO: Proof-of-concept for graph-to-image foundation-model transfer."
+authors = [{ name = "VINO Team" }]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.1.0",
+    "torchvision",
+    "torch-geometric",
+    "ogb",
+    "rdkit",
+    "numpy",
+    "scipy",
+    "pandas",
+    "scikit-learn",
+    "networkx",
+    "tqdm",
+    "pyyaml",
+    "omegaconf",
+    "hydra-core",
+    "transformers>=4.36.0",
+    "accelerate",
+    "safetensors",
+    "timm>=1.0.2",
+    "wandb"
+]
+
+[project.scripts]
+vino-build-images = "scripts.build_graph_images:main"
+vino-train = "scripts.train:main"
+vino-evaluate = "scripts.evaluate:main"
+vino-benchmark = "scripts.benchmark:main"
+
+[tool.setuptools.packages.find]
+include = ["vino*", "scripts*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --cov=vino"
+testpaths = [
+    "tests",
+]

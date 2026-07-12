@@ -1,0 +1,37 @@
+n_max: 256
+channels: ["raw_adj", "node_cov", "edge_cov"]
+final_range: [0, 1]
+pad_value: 0.0
+
+topology:
+  mode: "raw_adj"
+
+canonicalization:
+  mode: "fiedler_apsp"
+  laplacian: "symmetric_normalized"
+  sign_rule: "lexicographic_topology"
+  eigengap_tol: 1.0e-6
+  tie_tol: 1.0e-8
+  lex_round_decimals: 8
+
+propagation:
+  operator: "sym_norm_adj_self_loop"
+  powers: [0, 1, 2]
+  weights: [1.0, 0.5, 0.25]
+
+node_cov:
+  enabled: true
+  h: 64
+  seed: 123
+  standardize: "per_graph"
+  robust_quantile: 0.95
+  clip: 1.0
+
+edge_cov:
+  enabled: true
+  h: 64
+  seed: 456
+  missing_edge_attr: "ones"
+  aggregation: "mean_incident"
+  robust_quantile: 0.95
+  clip: 1.0

@@ -1,0 +1,25 @@
+n_max: 256
+channels: ["topology"]
+final_range: [0, 1]
+pad_value: 0.0
+
+topology:
+  mode: "apsp_heat"
+  sigma: 0.35
+  power: 2.0
+  disconnected_value: 0.0
+  diagonal_value: 1.0
+
+canonicalization:
+  mode: "fiedler_apsp"
+  laplacian: "symmetric_normalized"
+  sign_rule: "lexicographic_topology"
+  eigengap_tol: 1.0e-6
+  tie_tol: 1.0e-8
+  lex_round_decimals: 8
+
+node_cov:
+  enabled: false
+
+edge_cov:
+  enabled: false

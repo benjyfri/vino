@@ -1,0 +1,14 @@
+task_type: "multitask_classification"
+epochs: 50
+batch_size: 32
+lr_head: 1e-3
+lr_backbone: 1e-5
+weight_decay: 1e-4
+amp: true
+grad_clip: 1.0
+early_stopping_patience: 10
+metric_for_best: "val_roc_auc"
+metric_mode: "max"
+seed: 42
+num_workers: 8
+pos_weight: "auto"

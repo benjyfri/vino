@@ -1,0 +1,19 @@
+backbone_name: "facebook/dinov3-vits16-pretrain-lvd1689m"
+backbone_type: "hf_auto"
+pretrained_path: null
+freeze_mode: "frozen"
+pooling: "auto"
+normalize_lvd_imagenet: true
+input_mode: "resize_bilinear"
+input_size: 224
+patch_size: 16
+token_grid_size: 32
+resize_mode: "bilinear"
+input_adapter:
+  type: "conv1x1"
+head:
+  type: "binary"
+  hidden_dim: 256
+  dropout: 0.1
+input_stem:
+  enabled: false

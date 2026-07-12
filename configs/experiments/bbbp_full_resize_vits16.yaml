@@ -1,0 +1,10 @@
+dataset: configs/data/bbbp_full.yaml
+image: 
+  _base_: configs/image/graph_image_default.yaml
+model:
+  _base_: configs/model/dinov3_vits16_frozen.yaml
+  input_mode: "resize_bilinear"
+  input_size: 224
+  resize_mode: "bilinear"
+train:
+  _base_: configs/train/binary_classification.yaml

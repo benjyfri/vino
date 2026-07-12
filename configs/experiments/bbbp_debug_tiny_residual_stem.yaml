@@ -1,0 +1,16 @@
+_base_: configs/experiments/bbbp_debug_tiny.yaml
+dataset: configs/data/bbbp.yaml
+data_dir: data/processed/bbbp/fed337fa
+model:
+  _base_: configs/model/dinov3_vits16_frozen_residual_stem.yaml
+  backbone_name: "tiny_dummy"
+train:
+  _base_: configs/train/binary_classification.yaml
+  task_type: "binary_classification"
+  epochs: 2
+  batch_size: 2
+  amp: false
+  lr_head: 0.001
+  lr_backbone: 0.00001
+  weight_decay: 0.01
+  grad_clip: 1.0

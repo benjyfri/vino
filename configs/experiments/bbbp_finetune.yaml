@@ -1,0 +1,11 @@
+defaults:
+  - /data: bbbp
+  - /image: graph_image_default
+  - /model: dinov3_vits16plus
+  - /train: default_finetune
+  - _self_
+
+model:
+  freeze_mode: "finetune_last_2"
+  head:
+    type: "binary"

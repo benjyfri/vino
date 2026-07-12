@@ -1,0 +1,16 @@
+dataset: configs/data/bbbp.yaml
+data_dir: data/processed/bbbp/fed337fa
+image: 
+  _base_: configs/image/graph_image_default.yaml
+model:
+  _base_: configs/model/dinov3_vits16_frozen.yaml
+  backbone_name: "tiny_dummy"
+  freeze_mode: "frozen"
+  input_mode: "resize_bilinear"
+  input_size: 224
+train:
+  _base_: configs/train/binary_classification.yaml
+  task_type: "binary_classification"
+  epochs: 2
+  batch_size: 2
+  amp: false

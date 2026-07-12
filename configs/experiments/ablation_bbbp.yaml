@@ -1,0 +1,3 @@
+dataset: bbbp
+train:
+  task_type: "binary_classification"

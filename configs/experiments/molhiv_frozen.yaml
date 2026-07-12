@@ -1,0 +1,11 @@
+defaults:
+  - /data: molhiv
+  - /image: graph_image_default
+  - /model: dinov3_vits16plus
+  - /train: default_frozen
+  - _self_
+
+model:
+  freeze_mode: "frozen"
+  head:
+    type: "binary"

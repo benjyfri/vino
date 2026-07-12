@@ -1,0 +1,93 @@
+import torch
+from .shortest_paths import compute_apsp_heat_kernel
+from .canonicalize import canonicalize_topology
+from .covariance import compute_node_covariance
+from .edge_covariance import compute_edge_covariance
+from ..data.graph_record import GraphRecord
+from typing import Dict, Any
+
+def get_prop_operator(num_nodes: int, edge_index: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    A = torch.zeros((num_nodes, num_nodes))
+    if edge_index.size(1) > 0:
+        A[edge_index[0], edge_index[1]] = 1.0
+    A.fill_diagonal_(1.0)
+    
+    deg = A.sum(dim=1)
+    d_inv_sqrt = torch.pow(deg.clamp(min=eps), -0.5)
+    D_inv_sqrt = torch.diag(d_inv_sqrt)
+    return D_inv_sqrt @ A @ D_inv_sqrt
+
+def make_graph_image(record: GraphRecord, config: Dict[str, Any]) -> Dict[str, Any]:
+    n = record.num_nodes
+    img_cfg = config["image"]
+    N_max = img_cfg["n_max"]
+    
+    if n > N_max:
+        raise ValueError(f"Graph size {n} exceeds N_max {N_max}")
+        
+    # Topology
+    W_top = compute_apsp_heat_kernel(
+        n, record.edge_index,
+        sigma=img_cfg["topology"]["sigma"],
+        power=img_cfg["topology"]["power"]
+    )
+    
+    order, meta = canonicalize_topology(W_top)
+    
+    # A_prop
+    A_prop = get_prop_operator(n, record.edge_index)
+    
+    # Node Covariance
+    x = record.x if record.x is not None else torch.zeros((n, 1))
+    K_node = compute_node_covariance(
+        x, A_prop,
+        h_node=img_cfg["node_cov"]["h"],
+        seed=img_cfg["node_cov"]["seed"],
+        powers=img_cfg["propagation"]["powers"],
+        weights=img_cfg["propagation"]["weights"]
+    )
+    
+    # Edge Covariance
+    edge_attr = record.edge_attr
+    if edge_attr is None or edge_attr.size(1) == 0:
+        edge_attr = torch.ones((record.edge_index.size(1), 1))
+        
+    K_edge = compute_edge_covariance(
+        n, record.edge_index, edge_attr, A_prop,
+        h_edge=img_cfg["edge_cov"]["h"],
+        seed=img_cfg["edge_cov"]["seed"],
+        powers=img_cfg["propagation"]["powers"],
+        weights=img_cfg["propagation"]["weights"]
+    )
+    
+    # Apply canonical order
+    W_top = W_top[order][:, order]
+    K_node = K_node[order][:, order]
+    K_edge = K_edge[order][:, order]
+    
+    # Normalize topology to [0,1] if not already (it is by construction mostly)
+    
+    # Stack
+    image = torch.stack([W_top, K_node, K_edge], dim=0)
+    
+    # Pad
+    padded_image = torch.full((3, N_max, N_max), img_cfg["pad_value"], dtype=torch.float32)
+    padded_image[:, :n, :n] = image
+    
+    valid_node_mask = torch.zeros(N_max, dtype=torch.bool)
+    valid_node_mask[:n] = True
+    
+    valid_pixel_mask = valid_node_mask.unsqueeze(0) & valid_node_mask.unsqueeze(1)
+    
+    # Update meta
+    meta["num_nodes"] = n
+    meta["num_edges"] = record.edge_index.size(1)
+    
+    return {
+        "image": padded_image,
+        "valid_node_mask": valid_node_mask,
+        "valid_pixel_mask": valid_pixel_mask,
+        "y": record.y,
+        "graph_id": record.graph_id,
+        "metadata": meta
+    }

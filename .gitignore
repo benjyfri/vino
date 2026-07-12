@@ -1,0 +1,16 @@
+# Python caches and packages
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.env
+
+# Project specific ignores
+logs/
+outputs/
+data/
+pretrained/
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,12 @@
+dataset: configs/data/bbbp_full.yaml
+image: 
+  _base_: configs/image/graph_image_default.yaml
+model:
+  _base_: configs/model/dinov3_vits16_frozen.yaml
+  input_mode: "patch_aligned_repeat"
+  patch_size: 16
+  # Note: token_grid_size=32 is only valid for datasets where all n_valid <= 32.
+  # For full BBBP, token_grid_size must be increased or graphs filtered.
+  token_grid_size: 32
+train:
+  _base_: configs/train/binary_classification.yaml
