@@ -66,6 +66,7 @@ def collate_fn(batch):
 
 def evaluate(model, loader, config_dict):
     device = next(model.parameters()).device
+    model_cfg = _cfg_get(config_dict, "model", {})
     model.eval()
     total_loss = 0
     all_preds = []
@@ -74,6 +75,7 @@ def evaluate(model, loader, config_dict):
     with torch.no_grad():
         for batch in loader:
             images = batch["image"].to(device, non_blocking=True)
+            images = _apply_channel_ablation(images, model_cfg)
             y = batch["y"].to(device, non_blocking=True)
             valid_token_mask = batch.get("valid_token_mask")
             if valid_token_mask is not None:
@@ -108,6 +110,54 @@ def evaluate(model, loader, config_dict):
         
     metrics["loss"] = epoch_loss
     return metrics
+
+def _cfg_get(cfg, key, default=None):
+    """Small helper supporting dict/OmegaConf-style configs."""
+    try:
+        return cfg.get(key, default)
+    except Exception:
+        try:
+            return getattr(cfg, key)
+        except Exception:
+            return default
+
+
+def _apply_channel_ablation(images, model_cfg):
+    """
+    Apply channel ablation while preserving [B, 3, H, W].
+
+    Convention:
+      channel 0 = topology / APSP heat kernel
+      channel 1 = node-feature covariance
+      channel 2 = edge-feature covariance
+
+    Config options:
+      model.channel_indices: e.g. [0], [0, 1], [0, 1, 2]
+      model.channel_mask:    e.g. [1, 0, 0], [1, 1, 0], [1, 1, 1]
+    """
+    channel_indices = _cfg_get(model_cfg, "channel_indices", None)
+    channel_mask = _cfg_get(model_cfg, "channel_mask", None)
+
+    if channel_indices is None and channel_mask is None:
+        return images
+
+    c = images.shape[1]
+
+    if channel_indices is not None:
+        keep = [int(i) for i in list(channel_indices)]
+        mask = images.new_zeros(c)
+        for i in keep:
+            if i < 0 or i >= c:
+                raise ValueError(f"Invalid channel index {i} for image with {c} channels")
+            mask[i] = 1.0
+    else:
+        vals = [float(x) for x in list(channel_mask)]
+        if len(vals) != c:
+            raise ValueError(f"channel_mask length {len(vals)} does not match image channels {c}")
+        mask = images.new_tensor(vals)
+
+    return images * mask.view(1, c, 1, 1)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Train model")
@@ -235,6 +285,7 @@ def main():
         total_loss = 0
         for batch in train_loader:
             images = batch["image"].to(device, non_blocking=True)
+            images = _apply_channel_ablation(images, model_cfg)
             y = batch["y"].to(device, non_blocking=True)
             valid_token_mask = batch.get("valid_token_mask")
             if valid_token_mask is not None:
@@ -358,7 +409,11 @@ def main():
         "patch_size": model_cfg.get("patch_size"),
         "token_grid_size": model_cfg.get("token_grid_size"),
         "resize_mode": model_cfg.get("resize_mode"),
-        "input_stem_type": model_cfg.get("input_stem", {}).get("type", "residual_cnn"),
+        "input_stem_type": (
+            model_cfg.get("input_stem", {}).get("type", "identity")
+            if bool(model_cfg.get("input_stem", {}).get("enabled", False))
+            else "identity"
+        ),
         "input_stem_enabled": model_cfg.get("input_stem", {}).get("enabled", False),
         "input_stem_hidden_channels": model_cfg.get("input_stem", {}).get("hidden_channels", 32),
         "input_stem_depth": model_cfg.get("input_stem", {}).get("depth", 2),
