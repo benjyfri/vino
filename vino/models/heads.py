@@ -13,6 +13,14 @@ class BinaryClassificationHead(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+class LinearClassificationHead(nn.Module):
+    def __init__(self, in_dim: int, out_dim: int = 1):
+        super().__init__()
+        self.net = nn.Linear(in_dim, out_dim)
+
+    def forward(self, x):
+        return self.net(x)
+
 class RegressionHead(nn.Module):
     def __init__(self, in_dim: int, out_dim: int = 1, hidden_dim: int = 256, dropout: float = 0.1):
         super().__init__()

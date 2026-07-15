@@ -5,7 +5,7 @@ from torchvision.transforms import Normalize
 from .dinov3_backbone import DinoV3Backbone
 from .input_adapter import Conv1x1Adapter, IdentityAdapter
 from .input_stems import build_input_stem
-from .heads import BinaryClassificationHead, RegressionHead
+from .heads import BinaryClassificationHead, LinearClassificationHead, RegressionHead
 
 class GraphImageModel(nn.Module):
     def __init__(self, config):
@@ -47,6 +47,9 @@ class GraphImageModel(nn.Module):
                 config["model"]["head"]["dropout"],
                 out_dim,
             )
+        elif head_type == "linear":
+            out_dim = int(config["model"]["head"].get("num_tasks", 1))
+            self.head = LinearClassificationHead(emb_dim, out_dim)
         elif head_type == "regression":
             self.head = RegressionHead(
                 emb_dim, 

@@ -14,6 +14,7 @@ from vino.utils.hashing import hash_config, hash_preprocessing_config
 
 from vino.transforms.model_input import transform_graph_image_for_model
 from vino.utils.io import validate_result
+from vino.utils.sweep import apply_frozen_sweep_overrides
 
 class CachedGraphDataset(Dataset):
     def __init__(self, data_dir, model_config=None):
@@ -170,10 +171,23 @@ def main():
     parser.add_argument("--seed", type=int, default=None, help="Override random seed")
     parser.add_argument("--image-config", type=str, default=None, help="Override image preprocessing config")
     parser.add_argument("--num-workers", type=int, default=None, help="Override DataLoader workers")
+    parser.add_argument("--wandb", action="store_true", help="Log this run to Weights & Biases")
+    parser.add_argument("--wandb-project", default="vino_bbbp")
+    parser.add_argument("--wandb-entity", default=None)
+    parser.add_argument("--wandb-group", default="frozen_dino_full_ablation")
+    parser.add_argument("--output-root", default=None, help="Create a unique W&B run directory below this root")
     args = parser.parse_args()
     
     from vino.utils.config import load_resolved_config
     config = load_resolved_config(args.config)
+    wandb_run = None
+    if args.wandb:
+        import wandb
+        wandb_run = wandb.init(
+            project=args.wandb_project, entity=args.wandb_entity, group=args.wandb_group,
+            job_type="frozen_dino_ablation", config={"base_config": args.config},
+        )
+        apply_frozen_sweep_overrides(config, dict(wandb.config))
     if args.image_config:
         config.image = OmegaConf.load(args.image_config)
     if args.num_workers is not None:
@@ -257,8 +271,14 @@ def main():
     else:
         model_name_val = "unknown"
 
+    if args.output_dir is not None and args.output_root is not None:
+        raise ValueError("Use only one of --output_dir and --output-root")
     if args.output_dir is not None:
         out_dir = args.output_dir
+    elif args.output_root is not None:
+        if wandb_run is None:
+            raise ValueError("--output-root requires --wandb for a unique run ID")
+        out_dir = os.path.join(args.output_root, f"{wandb_run.id}_{hash_config(config_dict)}")
     else:
         out_dir = os.path.join("outputs", "run_" + hash_config(config_dict))
     if os.path.exists(out_dir):
@@ -273,6 +293,11 @@ def main():
     model = model.to(device)
     os.makedirs(out_dir, exist_ok=False)
     print("[debug] model device:", next(model.parameters()).device, flush=True)
+    if wandb_run is not None:
+        wandb_run.name = "__".join(str(wandb_run.config.get(k, "na")) for k in (
+            "channel_set", "resize_mode", "stem_variant", "head_variant", "seed"
+        ))
+        wandb_run.config.update(config_dict, allow_val_change=True)
     
     # Optim
     head_params = list(model.head.parameters()) + list(model.adapter.parameters())
@@ -307,6 +332,8 @@ def main():
     
     for epoch in range(epochs):
         model.train()
+        if model_cfg.get("freeze_mode") == "frozen":
+            model.backbone.eval()
         total_loss = 0
         for batch in train_loader:
             images = batch["image"].to(device, non_blocking=True)
@@ -328,6 +355,13 @@ def main():
                     assert next(model.parameters()).is_cuda, "Non-tiny model is not on CUDA"
                     assert images.is_cuda, "Input images are not on CUDA"
                     assert out.is_cuda, "Logits are not on CUDA"
+                if wandb_run is not None:
+                    import wandb
+                    wandb_run.log({
+                        "examples/model_input": wandb.Image(
+                            images[0].detach().cpu(), caption=f"channels={wandb_run.config.get('channel_set')}"
+                        )
+                    }, step=epoch)
 
             if config.train.task_type == "binary_classification":
                 loss = binary_cross_entropy_with_logits(out, y)
@@ -384,6 +418,8 @@ def main():
         print(print_msg, flush=True)
         metrics_file.write(json.dumps(log_entry) + "\n")
         metrics_file.flush()
+        if wandb_run is not None:
+            wandb_run.log(log_entry, step=epoch)
         
     metrics_file.close()
         
@@ -458,6 +494,15 @@ def main():
     validate_result(result)
     with open(os.path.join(out_dir, "result.json"), "w") as f:
         json.dump(result, f, indent=4)
+    if wandb_run is not None:
+        wandb_run.summary.update(result)
+        wandb_run.summary["selection_metric"] = result.get("val_roc_auc")
+        wandb_run.log({
+            "final/val_roc_auc": result.get("val_roc_auc"),
+            "final/test_roc_auc": result.get("test_roc_auc"),
+            "final/best_epoch": result.get("best_epoch"),
+        })
+        wandb_run.finish()
         
 if __name__ == "__main__":
     main()
