@@ -1,0 +1,4 @@
+dataset: molhiv
+root: data/raw
+task_type: binary_classification
+split_strategy: ogb_official

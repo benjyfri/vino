@@ -79,16 +79,13 @@ def main() -> None:
     p.add_argument("--train_frac", type=float, default=0.8)
     p.add_argument("--val_frac", type=float, default=0.1)
     p.add_argument("--mode", choices=["hardlink", "copy", "symlink"], default="hardlink")
-    p.add_argument("--overwrite", action="store_true")
     args = p.parse_args()
 
     if not args.src.exists():
         raise FileNotFoundError(args.src)
 
     if args.dst.exists():
-        if not args.overwrite:
-            raise FileExistsError(f"{args.dst} exists. Pass --overwrite to replace it.")
-        shutil.rmtree(args.dst)
+        raise FileExistsError(f"{args.dst} exists; split caches are immutable")
 
     files = sorted(args.src.glob("**/*.pt"))
     if not files:

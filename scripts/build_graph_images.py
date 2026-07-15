@@ -1,20 +1,23 @@
 import argparse
 import os
+import platform
+import subprocess
 import json
 import torch
 from omegaconf import OmegaConf
 from datetime import datetime
-from vino.utils.hashing import hash_config
+from vino.utils.hashing import hash_preprocessing_config
 from vino.data.synthetic import generate_synthetic_graphs
 from vino.transforms.graph_image import make_graph_image
 from tqdm import tqdm
+from vino.utils.io import validate_cached_graph
 
 def main():
     parser = argparse.ArgumentParser(description="Build graph images")
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--image-config", type=str, default=None)
     parser.add_argument("--output-dir", type=str, default="data/processed")
-    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--overwrite", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     
     from vino.utils.config import load_resolved_config
@@ -31,17 +34,17 @@ def main():
         config = OmegaConf.merge(config, img_conf)
         
     config_dict = OmegaConf.to_container(config, resolve=True)
-    conf_hash = hash_config(config_dict)
+    conf_hash = hash_preprocessing_config(config_dict)
     
-    dataset_name = config_dict.get("dataset", {}).get("dataset", "unknown")
-    if dataset_name == "unknown":
-        dataset_name = config_dict.get("dataset", "unknown")
+    dataset_cfg = config_dict.get("dataset", {})
+    dataset_name = dataset_cfg.get("dataset", "unknown") if isinstance(dataset_cfg, dict) else dataset_cfg
         
     out_dir = os.path.join(args.output_dir, dataset_name, conf_hash)
-    import shutil
-    if args.overwrite and os.path.exists(out_dir):
-        shutil.rmtree(out_dir)
-    os.makedirs(out_dir, exist_ok=True)
+    if args.overwrite:
+        raise ValueError("--overwrite is disabled: cached datasets are immutable")
+    if os.path.exists(out_dir):
+        raise FileExistsError(f"Cache already exists: {out_dir}")
+    os.makedirs(out_dir, exist_ok=False)
     
     if dataset_name == "synthetic":
         dconf = config_dict["dataset"] if "dataset" in config_dict else config_dict
@@ -57,8 +60,12 @@ def main():
     elif dataset_name == "bbbp":
         from vino.data.pyg_loaders import load_bbbp
         dconf = config_dict["dataset"] if "dataset" in config_dict else config_dict
-        limit = dconf.get("limit", 10)
-        records = load_bbbp(limit=limit)
+        limit = dconf.get("limit")
+        records = load_bbbp(limit=limit, split_seed=int(dconf.get("split_seed", 42)))
+    elif dataset_name == "molhiv":
+        from vino.data.pyg_loaders import load_molhiv
+        dconf = config_dict["dataset"]
+        records = load_molhiv(root=dconf.get("root", "data/ogb"))
     else:
         raise ValueError(f"Unknown dataset {dataset_name}")
         
@@ -74,6 +81,9 @@ def main():
         
         try:
             img_data = make_graph_image(r, config_dict)
+            img_data["split"] = r.split
+            img_data["source_metadata"] = r.metadata
+            validate_cached_graph(img_data)
             torch.save(img_data, os.path.join(split_dir, f"{r.graph_id}.pt"))
             splits[r.split] += 1
             num_success += 1
@@ -95,6 +105,12 @@ def main():
         "num_failed": num_failed,
         "output_dir": out_dir,
         "config_hash": conf_hash,
+        "split_strategy": config_dict.get("dataset", {}).get("split_strategy", "ogb_official" if dataset_name == "molhiv" else "generated"),
+        "split_seed": config_dict.get("dataset", {}).get("split_seed"),
+        "split_graph_ids": {s: sorted(r.graph_id for r in records if r.split == s) for s in splits},
+        "python_version": platform.python_version(),
+        "torch_version": torch.__version__,
+        "git_revision": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False).stdout.strip() or None,
         "timestamp": datetime.now().isoformat()
     }
     

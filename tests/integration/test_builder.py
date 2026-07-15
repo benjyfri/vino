@@ -3,18 +3,18 @@ import subprocess
 import json
 import pytest
 
-def test_builder_manifest():
+def test_builder_manifest(tmp_path):
     config_path = "configs/experiments/smoke_synthetic.yaml"
     result = subprocess.run([
         "python", "scripts/build_graph_images.py", 
-        "--config", config_path, "--overwrite"
+        "--config", config_path, "--output-dir", str(tmp_path)
     ], capture_output=True, text=True)
     assert result.returncode == 0
     
     # Check manifest
     # We don't easily know the output dir, but we can search outputs/ or data/processed
     # In smoke_synthetic, it writes to data/processed/synthetic/
-    base_dir = "data/processed/synthetic"
+    base_dir = str(tmp_path / "synthetic")
     assert os.path.exists(base_dir)
     
     # find newest manifest
@@ -32,8 +32,12 @@ def test_builder_manifest():
     assert "num_failed" in manifest
     assert manifest["num_success"] > 0
     
-def test_builder_fail():
-    # If a dataset is unknown, it raises ValueError, but if conversions fail, it raises RuntimeError.
-    # We can test this by providing an invalid config that will fail conversion
-    # For now, just test that the script exists with code 0 on good config
-    pass
+def test_builder_fail(tmp_path):
+    config = tmp_path / "invalid.yaml"
+    config.write_text("dataset:\n  dataset: unknown\nimage: {}\n")
+    result = subprocess.run([
+        "python", "scripts/build_graph_images.py", "--config", str(config),
+        "--output-dir", str(tmp_path / "cache")
+    ], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "Unknown dataset unknown" in result.stderr

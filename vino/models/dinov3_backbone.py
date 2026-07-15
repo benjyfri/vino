@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import AutoModel, PreTrainedModel
+from transformers import AutoModel
 
 class DinoV3Backbone(nn.Module):
     def __init__(self, model_name: str = "facebook/dinov3-vits16-pretrain-lvd1689m", freeze_mode: str = "frozen", pretrained_path: str = None):
@@ -12,10 +12,9 @@ class DinoV3Backbone(nn.Module):
             path = pretrained_path if pretrained_path else model_name
             try:
                 self.model = AutoModel.from_pretrained(path)
-            except Exception as e:
-                # Mock it for smoke tests if weights missing
-                print(f"Warning: could not load model {path}. Using mock backbone. Error: {e}")
-                self.model = TinyBackbone()
+            except Exception as exc:
+                raise RuntimeError(f"Failed to load requested pretrained backbone {path!r}") from exc
+        self.output_dim = self._output_dim()
                 
         self.apply_freeze(freeze_mode)
         
@@ -31,9 +30,20 @@ class DinoV3Backbone(nn.Module):
         if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
             return outputs.pooler_output
         elif hasattr(outputs, "last_hidden_state"):
-            return outputs.last_hidden_state[:, 0]
+            hidden = outputs.last_hidden_state
+            return hidden[:, 0] if hidden.ndim == 3 else hidden.mean(dim=tuple(range(2, hidden.ndim)))
         else:
             return outputs[0][:, 0]
+
+    def _output_dim(self) -> int:
+        if isinstance(self.model, TinyBackbone):
+            return 16
+        config = self.model.config
+        if getattr(config, "hidden_size", None):
+            return int(config.hidden_size)
+        if getattr(config, "hidden_sizes", None):
+            return int(config.hidden_sizes[-1])
+        raise ValueError(f"Cannot infer output dimension from {type(config).__name__}")
             
     def apply_freeze(self, mode: str):
         if mode == "full":
@@ -55,6 +65,8 @@ class DinoV3Backbone(nn.Module):
         elif mode in ["train_patch_embed", "train_stem_and_patch_embed"]:
             freeze_all(self.model)
             set_trainable_patch_embedding(self.model, mode_name=mode)
+        else:
+            raise ValueError(f"Unknown freeze mode: {mode}")
             
 def freeze_all(module: nn.Module):
     for param in module.parameters():

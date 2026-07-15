@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchvision.transforms import Normalize
 from .dinov3_backbone import DinoV3Backbone
 from .input_adapter import Conv1x1Adapter, IdentityAdapter
@@ -34,20 +35,17 @@ class GraphImageModel(nn.Module):
             pretrained_path=config["model"]["pretrained_path"]
         )
         
-        # Discover embedding dim (mocking for tiny)
-        if "tiny" in config["model"]["backbone_name"]:
-            emb_dim = 16
-        else:
-            # Assuming ViT-S/16 has 384
-            emb_dim = 384
+        emb_dim = self.backbone.output_dim
             
         # Head
         head_type = config["model"]["head"]["type"]
         if head_type == "binary":
+            out_dim = int(config["model"]["head"].get("num_tasks", 1))
             self.head = BinaryClassificationHead(
                 emb_dim, 
                 config["model"]["head"]["hidden_dim"], 
-                config["model"]["head"]["dropout"]
+                config["model"]["head"]["dropout"],
+                out_dim,
             )
         elif head_type == "regression":
             self.head = RegressionHead(
@@ -56,11 +54,16 @@ class GraphImageModel(nn.Module):
                 config["model"]["head"]["hidden_dim"], 
                 config["model"]["head"]["dropout"]
             )
+        else:
+            raise ValueError(f"Unknown head type: {head_type}")
             
-    def forward(self, images):
+    def forward(self, images, valid_token_mask=None):
         x = self.normalize(images)
         x = self.input_stem(x)
         x = self.adapter(x)
+        if valid_token_mask is not None:
+            mask = F.interpolate(valid_token_mask[:, None].float(), size=x.shape[-2:], mode="nearest")
+            x = x * mask
         emb = self.backbone(x)
         out = self.head(emb)
         return out

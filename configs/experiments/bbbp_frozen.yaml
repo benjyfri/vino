@@ -1,11 +1,8 @@
-defaults:
-  - /data: bbbp
-  - /image: graph_image_default
-  - /model: dinov3_vits16plus
-  - /train: default_frozen
-  - _self_
-
+_base_: configs/experiments/bbbp_frozen_vits16.yaml
 model:
-  freeze_mode: "frozen"
+  _base_: configs/model/dinov3_vits16plus_frozen.yaml
+  freeze_mode: frozen
   head:
-    type: "binary"
+    type: binary
+train:
+  _base_: configs/train/default_frozen.yaml

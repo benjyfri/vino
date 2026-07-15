@@ -1,8 +1,5 @@
-dataset: molhiv
-image: 
-  channels: ["topology", "node_cov", "edge_cov"]
+_base_: configs/experiments/molhiv_frozen.yaml
 model:
-  backbone_name: "facebook/dinov3-vits16plus-pretrain-lvd1689m"
-  freeze_mode: "last2"
+  _base_: configs/model/dinov3_vits16plus_last2.yaml
 train:
-  task_type: "binary_classification"
+  _base_: configs/train/default_finetune.yaml

@@ -26,39 +26,54 @@ def make_graph_image(record: GraphRecord, config: Dict[str, Any]) -> Dict[str, A
         raise ValueError(f"Graph size {n} exceeds N_max {N_max}")
         
     # Topology
-    W_top = compute_apsp_heat_kernel(
-        n, record.edge_index,
-        sigma=img_cfg["topology"]["sigma"],
-        power=img_cfg["topology"]["power"]
-    )
+    topology_mode = img_cfg["topology"].get("mode", "apsp_heat")
+    if topology_mode == "raw_adj":
+        W_top = torch.zeros((n, n), dtype=torch.float32)
+        if record.edge_index.numel():
+            W_top[record.edge_index[0], record.edge_index[1]] = 1.0
+        W_top.fill_diagonal_(1.0)
+    elif topology_mode == "apsp_heat":
+        W_top = compute_apsp_heat_kernel(
+            n, record.edge_index, sigma=img_cfg["topology"]["sigma"],
+            power=img_cfg["topology"]["power"]
+        )
+    else:
+        raise ValueError(f"Unknown topology mode: {topology_mode}")
     
-    order, meta = canonicalize_topology(W_top)
+    canonical_mode = img_cfg.get("canonicalization", {}).get("mode", "fiedler_apsp")
+    if canonical_mode == "random":
+        generator = torch.Generator().manual_seed(int(img_cfg["canonicalization"].get("seed", 42)))
+        order, meta = torch.randperm(n, generator=generator), {"canonicalization_unstable": False}
+    elif canonical_mode == "fiedler_apsp":
+        order, meta = canonicalize_topology(W_top)
+    else:
+        raise ValueError(f"Unknown canonicalization mode: {canonical_mode}")
     
     # A_prop
     A_prop = get_prop_operator(n, record.edge_index)
     
-    # Node Covariance
-    x = record.x if record.x is not None else torch.zeros((n, 1))
-    K_node = compute_node_covariance(
-        x, A_prop,
-        h_node=img_cfg["node_cov"]["h"],
-        seed=img_cfg["node_cov"]["seed"],
-        powers=img_cfg["propagation"]["powers"],
-        weights=img_cfg["propagation"]["weights"]
-    )
+    enabled = set(img_cfg.get("channels", ["topology", "node_cov", "edge_cov"]))
+    if "node_cov" in enabled:
+        x = record.x if record.x is not None else torch.zeros((n, 1))
+        K_node = compute_node_covariance(
+            x, A_prop, h_node=img_cfg["node_cov"]["h"], seed=img_cfg["node_cov"]["seed"],
+            powers=img_cfg["propagation"]["powers"], weights=img_cfg["propagation"]["weights"]
+        )
+    else:
+        K_node = torch.zeros_like(W_top)
     
     # Edge Covariance
-    edge_attr = record.edge_attr
-    if edge_attr is None or edge_attr.size(1) == 0:
-        edge_attr = torch.ones((record.edge_index.size(1), 1))
-        
-    K_edge = compute_edge_covariance(
-        n, record.edge_index, edge_attr, A_prop,
-        h_edge=img_cfg["edge_cov"]["h"],
-        seed=img_cfg["edge_cov"]["seed"],
-        powers=img_cfg["propagation"]["powers"],
-        weights=img_cfg["propagation"]["weights"]
-    )
+    if "edge_cov" in enabled:
+        edge_attr = record.edge_attr
+        if edge_attr is None or edge_attr.size(1) == 0:
+            edge_attr = torch.ones((record.edge_index.size(1), 1))
+        K_edge = compute_edge_covariance(
+            n, record.edge_index, edge_attr, A_prop, h_edge=img_cfg["edge_cov"]["h"],
+            seed=img_cfg["edge_cov"]["seed"], powers=img_cfg["propagation"]["powers"],
+            weights=img_cfg["propagation"]["weights"]
+        )
+    else:
+        K_edge = torch.zeros_like(W_top)
     
     # Apply canonical order
     W_top = W_top[order][:, order]
@@ -68,7 +83,11 @@ def make_graph_image(record: GraphRecord, config: Dict[str, Any]) -> Dict[str, A
     # Normalize topology to [0,1] if not already (it is by construction mostly)
     
     # Stack
-    image = torch.stack([W_top, K_node, K_edge], dim=0)
+    image = torch.stack([
+        W_top if ("topology" in enabled or "raw_adj" in enabled) else torch.zeros_like(W_top),
+        K_node if "node_cov" in enabled else torch.zeros_like(K_node),
+        K_edge if "edge_cov" in enabled else torch.zeros_like(K_edge),
+    ], dim=0)
     
     # Pad
     padded_image = torch.full((3, N_max, N_max), img_cfg["pad_value"], dtype=torch.float32)

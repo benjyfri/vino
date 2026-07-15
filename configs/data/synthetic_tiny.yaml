@@ -1,0 +1,8 @@
+dataset: synthetic
+num_graphs: 100
+min_nodes: 6
+max_nodes: 20
+node_dim: 10
+edge_dim: 3
+task_type: binary_classification
+seed: 42

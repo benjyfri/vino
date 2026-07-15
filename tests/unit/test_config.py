@@ -2,6 +2,7 @@ import pytest
 import os
 from omegaconf import OmegaConf, DictConfig
 from vino.utils.config import load_resolved_config
+from vino.utils.hashing import hash_preprocessing_config
 
 def test_load_resolved_config():
     # Test loading BBBP experiment config
@@ -40,3 +41,17 @@ def test_bbbp_config_image_fields():
     assert "topology" in cfg.image, "cfg.image missing topology"
     assert "node_cov" in cfg.image, "cfg.image missing node_cov"
     assert "edge_cov" in cfg.image, "cfg.image missing edge_cov"
+
+def test_hydra_defaults_and_root_base_are_resolved():
+    frozen = load_resolved_config("configs/experiments/bbbp_frozen.yaml")
+    finetune = load_resolved_config("configs/experiments/bbbp_finetune_vits16plus.yaml")
+    assert frozen.train.batch_size == 64
+    assert finetune.model.freeze_mode == "last2"
+    assert finetune.model.head.type == "binary"
+
+def test_preprocessing_hash_ignores_training_only_fields():
+    a = load_resolved_config("configs/experiments/bbbp_frozen_vits16.yaml")
+    b = load_resolved_config("configs/experiments/bbbp_frozen_vits16.yaml")
+    b.train.seed = 999
+    b.model.freeze_mode = "full"
+    assert hash_preprocessing_config(a) == hash_preprocessing_config(b)

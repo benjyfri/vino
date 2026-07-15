@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read(./**)",
+      "Edit(./vino/**)",
+      "Edit(./tests/**)",
+      "Edit(./scripts/**)",
+      "Edit(./configs/**)",
+      "Edit(./sbatch/**)",
+      "Edit(./.ai/**)",
+      "Write(./.ai/**)",
+      "Write(./vino/**)",
+      "Write(./tests/**)",
+      "Write(./scripts/**)",
+      "Write(./configs/**)",
+      "Write(./sbatch/**)",
+
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(ls*)",
+      "Bash(find .*)",
+      "Bash(which python*)",
+      "Bash(python --version*)",
+      "Bash(pytest*)",
+      "Bash(python -m pytest*)",
+      "Bash(bash .ai/scripts/repo_health.sh*)",
+      "Bash(bash .ai/scripts/run_tests_fast.sh*)",
+      "Bash(bash .ai/scripts/preview_sbatch.sh*)"
+    ],
+    "deny": [
+      "Edit(./data/**)",
+      "Edit(./outputs/**)",
+      "Edit(./logs/**)",
+      "Edit(./pretrained/**)",
+      "Edit(./reports/**)",
+      "Edit(./wandb/**)",
+      "Edit(./checkpoints/**)",
+
+      "Write(./data/**)",
+      "Write(./outputs/**)",
+      "Write(./logs/**)",
+      "Write(./pretrained/**)",
+      "Write(./reports/**)",
+      "Write(./wandb/**)",
+      "Write(./checkpoints/**)",
+
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(git switch*)",
+      "Bash(git checkout*)",
+      "Bash(git branch*)",
+      "Bash(git reset*)",
+      "Bash(git clean*)",
+      "Bash(rm*)",
+      "Bash(sbatch*)",
+      "Bash(scancel*)",
+      "Bash(sudo*)"
+    ]
+  }
+}

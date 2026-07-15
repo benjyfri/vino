@@ -1,3 +1,1 @@
-dataset: bbbp
-train:
-  task_type: "binary_classification"
+_base_: configs/experiments/bbbp_frozen_vits16.yaml

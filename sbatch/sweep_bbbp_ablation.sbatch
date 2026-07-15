@@ -23,4 +23,8 @@ VARIANT=${VARIANTS[$SLURM_ARRAY_TASK_ID]}
 
 echo "Running variant: $VARIANT"
 
-python scripts/train.py --config configs/experiments/ablation_bbbp.yaml --image-config configs/image/graph_image_${VARIANT}.yaml | tee logs/slurm/sweep_bbbp_${VARIANT}_${SLURM_JOB_ID}.log
+OUT_DIR="outputs/bbbp_ablation_${VARIANT}_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+python scripts/train.py \
+  --config configs/experiments/ablation_bbbp.yaml \
+  --image-config "configs/image/graph_image_${VARIANT}.yaml" \
+  --output_dir "${OUT_DIR}" | tee "logs/slurm/sweep_bbbp_${VARIANT}_${SLURM_JOB_ID}.log"

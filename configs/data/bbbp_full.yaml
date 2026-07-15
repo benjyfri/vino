@@ -1,0 +1,6 @@
+dataset: bbbp
+root: data/raw
+task_type: binary_classification
+limit: null
+split_strategy: stratified_random
+split_seed: 42

@@ -1,20 +1,23 @@
 import argparse
 import os
 import json
+import platform
+import subprocess
 import torch
 from torch.utils.data import Dataset, DataLoader
 from omegaconf import OmegaConf
 from vino.models.graph_image_model import GraphImageModel
 from vino.training.losses import binary_cross_entropy_with_logits, masked_multitask_bce, mse_loss
-from vino.training.metrics import compute_binary_metrics, compute_regression_metrics
-from vino.utils.seed import seed_everything
-from vino.utils.hashing import hash_config
+from vino.training.metrics import compute_binary_metrics, compute_multitask_metrics, compute_regression_metrics
+from vino.utils.seed import seed_everything, seed_worker
+from vino.utils.hashing import hash_config, hash_preprocessing_config
 
 from vino.transforms.model_input import transform_graph_image_for_model
+from vino.utils.io import validate_result
 
 class CachedGraphDataset(Dataset):
     def __init__(self, data_dir, model_config=None):
-        self.files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.pt')]
+        self.files = [os.path.join(data_dir, f) for f in sorted(os.listdir(data_dir)) if f.endswith('.pt')]
         self.model_config = model_config or {}
         
     def __len__(self):
@@ -81,7 +84,7 @@ def evaluate(model, loader, config_dict):
             if valid_token_mask is not None:
                 valid_token_mask = valid_token_mask.to(device, non_blocking=True)
                 
-            out = model(images)
+            out = model(images, valid_token_mask=valid_token_mask)
             task_type = config_dict.get("train", {}).get("task_type", "unknown")
             if task_type == "binary_classification":
                 loss = binary_cross_entropy_with_logits(out, y)
@@ -104,7 +107,7 @@ def evaluate(model, loader, config_dict):
     if task_type == "binary_classification":
         metrics = compute_binary_metrics(preds, targets)
     elif task_type == "multitask_classification":
-        metrics = compute_binary_metrics(preds, targets)
+        metrics = compute_multitask_metrics(preds, targets)
     else:
         metrics = compute_regression_metrics(preds, targets)
         
@@ -165,10 +168,23 @@ def main():
     parser.add_argument("--data_dir", type=str, default=None)
     parser.add_argument("--output_dir", type=str, default=None, help="Explicit output directory. Defaults to outputs/run_<hash> if not set.")
     parser.add_argument("--seed", type=int, default=None, help="Override random seed")
+    parser.add_argument("--image-config", type=str, default=None, help="Override image preprocessing config")
+    parser.add_argument("--num-workers", type=int, default=None, help="Override DataLoader workers")
     args = parser.parse_args()
     
     from vino.utils.config import load_resolved_config
     config = load_resolved_config(args.config)
+    if args.image_config:
+        config.image = OmegaConf.load(args.image_config)
+    if args.num_workers is not None:
+        config.train.num_workers = args.num_workers
+    required = {
+        "model": ["backbone_name", "freeze_mode", "normalize_lvd_imagenet", "input_adapter", "head"],
+        "train": ["batch_size", "epochs", "lr_head", "lr_backbone", "weight_decay", "grad_clip", "task_type"],
+    }
+    missing = [f"{section}.{key}" for section, keys in required.items() for key in keys if key not in config[section]]
+    if missing:
+        raise ValueError("Incomplete experiment config; missing: " + ", ".join(missing))
     
     if args.seed is not None:
         seed = int(args.seed)
@@ -201,28 +217,33 @@ def main():
     elif "data_dir" in config_dict:
         data_dir = config_dict["data_dir"]
     else:
-        conf_hash = hash_config(config_dict)
+        conf_hash = hash_preprocessing_config(config_dict)
         data_dir = os.path.join("data/processed", dataset_name, conf_hash)
         
     train_dir = os.path.join(data_dir, "train")
     if not os.path.exists(train_dir):
         print(f"Data not found at {train_dir}. Please run build_graph_images.py first.")
-        return
+        raise FileNotFoundError(f"Data not found at {train_dir}. Please run build_graph_images.py first.")
         
     model_config = config_dict.get("model", {})
     
     train_dataset = CachedGraphDataset(train_dir, model_config=model_config)
-    train_loader = DataLoader(train_dataset, batch_size=config.train.batch_size, shuffle=True, collate_fn=collate_fn)
+    if not train_dataset:
+        raise ValueError(f"Training cache is empty: {train_dir}")
+    generator = torch.Generator().manual_seed(seed)
+    loader_kwargs = {"batch_size": config.train.batch_size, "collate_fn": collate_fn,
+                     "num_workers": int(config.train.get("num_workers", 0)), "worker_init_fn": seed_worker}
+    train_loader = DataLoader(train_dataset, shuffle=True, generator=generator, **loader_kwargs)
     
     val_dir = os.path.join(data_dir, "val")
     val_loader = None
     if os.path.exists(val_dir) and len(os.listdir(val_dir)) > 0:
-        val_loader = DataLoader(CachedGraphDataset(val_dir, model_config=model_config), batch_size=config.train.batch_size, shuffle=False, collate_fn=collate_fn)
+        val_loader = DataLoader(CachedGraphDataset(val_dir, model_config=model_config), shuffle=False, **loader_kwargs)
         
     test_dir = os.path.join(data_dir, "test")
     test_loader = None
     if os.path.exists(test_dir) and len(os.listdir(test_dir)) > 0:
-        test_loader = DataLoader(CachedGraphDataset(test_dir, model_config=model_config), batch_size=config.train.batch_size, shuffle=False, collate_fn=collate_fn)
+        test_loader = DataLoader(CachedGraphDataset(test_dir, model_config=model_config), shuffle=False, **loader_kwargs)
     
     model_cfg = config_dict.get("model", {})
     if "backbone_name" in model_cfg:
@@ -236,6 +257,13 @@ def main():
     else:
         model_name_val = "unknown"
 
+    if args.output_dir is not None:
+        out_dir = args.output_dir
+    else:
+        out_dir = os.path.join("outputs", "run_" + hash_config(config_dict))
+    if os.path.exists(out_dir):
+        raise FileExistsError(f"Output directory already exists: {out_dir}")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[device] {device}", flush=True)
     if torch.cuda.is_available():
@@ -243,6 +271,7 @@ def main():
 
     model = GraphImageModel(config_dict)
     model = model.to(device)
+    os.makedirs(out_dir, exist_ok=False)
     print("[debug] model device:", next(model.parameters()).device, flush=True)
     
     # Optim
@@ -258,12 +287,6 @@ def main():
     
     epochs = config.train.epochs
     
-    if args.output_dir is not None:
-        out_dir = args.output_dir
-    else:
-        out_dir = os.path.join("outputs", "run_" + hash_config(config_dict))
-    os.makedirs(out_dir, exist_ok=True)
-    
     with open(os.path.join(out_dir, "config_resolved.yaml"), "w") as f:
         OmegaConf.save(config, f)
         
@@ -272,8 +295,10 @@ def main():
     best_train_loss = float("inf")
     best_val_metric_val = None
     best_epoch = 0
-    metric_for_best = "train_loss"
-    metric_mode = "min"
+    metric_for_best = str(config.train.get("metric_for_best", "val_loss" if val_loader else "train_loss"))
+    metric_mode = str(config.train.get("metric_mode", "min"))
+    if metric_mode not in {"min", "max"}:
+        raise ValueError(f"metric_mode must be 'min' or 'max', got {metric_mode!r}")
     
     # Pre-save a best checkpoint in case epochs=0
     torch.save(model.state_dict(), os.path.join(out_dir, "checkpoint_best.pt"))
@@ -292,7 +317,7 @@ def main():
                 valid_token_mask = valid_token_mask.to(device, non_blocking=True)
                 
             optimizer.zero_grad()
-            out = model(images)
+            out = model(images, valid_token_mask=valid_token_mask)
             
             if not printed_first_batch_debug:
                 printed_first_batch_debug = True
@@ -326,20 +351,13 @@ def main():
         is_best = False
         if val_loader is not None:
             val_metrics = evaluate(model, val_loader, config_dict)
-            log_entry["val_loss"] = val_metrics["loss"]
-            if "accuracy" in val_metrics:
-                log_entry["val_accuracy"] = val_metrics["accuracy"]
-            if "roc_auc" in val_metrics:
-                log_entry["val_roc_auc"] = val_metrics["roc_auc"]
-                
-            if "roc_auc" in val_metrics and val_metrics["roc_auc"] is not None:
-                current_metric = val_metrics["roc_auc"]
-                metric_for_best = "val_roc_auc"
-                metric_mode = "max"
-            else:
+            log_entry.update({f"val_{key}": value for key, value in val_metrics.items()})
+            metric_key = metric_for_best.removeprefix("val_")
+            if metric_key not in val_metrics:
+                raise ValueError(f"Configured metric_for_best {metric_for_best!r} was not computed")
+            current_metric = val_metrics[metric_key]
+            if current_metric is None:
                 current_metric = val_metrics["loss"]
-                metric_for_best = "val_loss"
-                metric_mode = "min"
                 
             if best_val_metric_val is None:
                 is_best = True
@@ -428,8 +446,16 @@ def main():
         "num_total_params": sum(p.numel() for p in model.parameters()),
         "output_dir": out_dir,
         "data_dir": data_dir,
-        "timestamp": datetime.datetime.now().isoformat()
+        "timestamp": datetime.datetime.now().isoformat(),
+        "config_hash": hash_config(config_dict),
+        "preprocessing_hash": hash_preprocessing_config(config_dict),
+        "python_version": platform.python_version(),
+        "torch_version": torch.__version__,
+        "git_revision": subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+        ).stdout.strip() or None,
     }
+    validate_result(result)
     with open(os.path.join(out_dir, "result.json"), "w") as f:
         json.dump(result, f, indent=4)
         

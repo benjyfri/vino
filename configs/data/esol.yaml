@@ -1,0 +1,3 @@
+dataset: esol
+root: data/raw
+task_type: regression

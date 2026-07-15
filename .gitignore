@@ -6,11 +6,19 @@ __pycache__/
 .env
 
 # Project specific ignores
-logs/
-outputs/
-data/
-pretrained/
+/logs/
+/outputs/
+/data/
+/pretrained/
 
 # IDE
 .vscode/
 .idea/
+# Local AI-agent operational files
+.agent_setup_backup/
+.ai/logs/
+.ai/reports/
+.ai/state/
+
+# Generated experiment reports/results
+/reports/

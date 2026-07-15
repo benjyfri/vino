@@ -2,19 +2,15 @@ import os
 import subprocess
 import json
 from omegaconf import OmegaConf
-from vino.utils.hashing import hash_config
 
-def test_train_tiny_finetune():
-    config_path = "configs/experiments/smoke_synthetic.yaml"
+def test_train_tiny_finetune(tmp_path, synthetic_run_inputs):
+    config_path, data_dir = synthetic_run_inputs
+    out_dir = tmp_path / "finetune_run"
     result = subprocess.run([
         "python", "scripts/train.py", 
-        "--config", config_path
+        "--config", str(config_path), "--data_dir", str(data_dir), "--output_dir", str(out_dir)
     ], capture_output=True, text=True)
     assert result.returncode == 0
-    
-    config = OmegaConf.load(config_path)
-    config_dict = OmegaConf.to_container(config, resolve=True)
-    out_dir = os.path.join("outputs", "run_" + hash_config(config_dict))
     
     assert os.path.exists(out_dir)
     required_files = [

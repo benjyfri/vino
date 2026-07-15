@@ -5,7 +5,10 @@ def test_cli_help():
     scripts = [
         "scripts/build_graph_images.py",
         "scripts/train.py",
-        "scripts/download_dinov3.py"
+        "scripts/download_dinov3.py",
+        "scripts/evaluate.py",
+        "scripts/benchmark.py",
+        "scripts/collect_results.py",
     ]
     
     for script in scripts:

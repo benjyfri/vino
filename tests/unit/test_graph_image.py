@@ -22,4 +22,14 @@ def test_graph_image():
     
     out = make_graph_image(record, config)
     assert out["image"].shape == (3, 256, 256)
-    assert out["valid_node_mask"].sum() == 3
+
+def test_topology_only_ablation_keeps_three_channel_contract():
+    record = GraphRecord("g", torch.randn(4, 2), torch.tensor([[0, 1], [1, 0]]), torch.tensor([1]), num_nodes=4)
+    from vino.utils.config import load_resolved_config
+    cfg = {"image": dict(load_resolved_config("configs/experiments/smoke_synthetic.yaml").image)}
+    cfg["image"] = dict(load_resolved_config("configs/experiments/smoke_synthetic.yaml").image)
+    cfg["image"]["channels"] = ["topology"]
+    out = make_graph_image(record, cfg)
+    assert out["image"].shape[0] == 3
+    assert torch.count_nonzero(out["image"][1:]) == 0
+    assert out["valid_node_mask"].sum() == 4

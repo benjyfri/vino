@@ -1,8 +1,1 @@
-dataset: bbbp
-image: 
-  channels: ["topology", "node_cov", "edge_cov"]
-model:
-  backbone_name: "facebook/dinov3-vits16plus-pretrain-lvd1689m"
-  freeze_mode: "last2"
-train:
-  task_type: "binary_classification"
+_base_: configs/experiments/bbbp_finetune.yaml

@@ -1,6 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
+from unittest.mock import patch
 from vino.models.dinov3_backbone import DinoV3Backbone
 
 class DummyViT(nn.Module):
@@ -57,3 +58,12 @@ def test_missing_patch_embed_fails():
     
     with pytest.raises(ValueError, match="Failed to locate patch embedding module"):
         backbone.apply_freeze("train_patch_embed")
+
+def test_pretrained_load_failure_is_not_silently_mocked():
+    with patch("vino.models.dinov3_backbone.AutoModel.from_pretrained", side_effect=OSError("denied")):
+        with pytest.raises(RuntimeError, match="Failed to load requested pretrained backbone"):
+            DinoV3Backbone(model_name="facebook/not-real", freeze_mode="frozen")
+
+def test_unknown_freeze_mode_fails():
+    with pytest.raises(ValueError, match="Unknown freeze mode"):
+        DinoV3Backbone(model_name="tiny", freeze_mode="typo")

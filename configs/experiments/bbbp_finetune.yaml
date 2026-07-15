@@ -1,11 +1,6 @@
-defaults:
-  - /data: bbbp
-  - /image: graph_image_default
-  - /model: dinov3_vits16plus
-  - /train: default_finetune
-  - _self_
-
+_base_: configs/experiments/bbbp_frozen_vits16.yaml
 model:
-  freeze_mode: "finetune_last_2"
-  head:
-    type: "binary"
+  _base_: configs/model/dinov3_vits16plus_last2.yaml
+  freeze_mode: last2
+train:
+  _base_: configs/train/default_finetune.yaml
