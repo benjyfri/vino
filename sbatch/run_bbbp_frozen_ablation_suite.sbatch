@@ -22,9 +22,10 @@ echo "SLURM_JOB_ID=${SLURM_JOB_ID:-NA}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-NA}"
 echo "============================================================"
 
-cd /home/benjamin.fri/PycharmProjects/vino
-
-source ~/miniconda3/etc/profile.d/conda.sh
+VINO_ROOT="${VINO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
+CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
+cd "${VINO_ROOT}"
+source "${CONDA_SH}"
 conda activate vino
 
 mkdir -p logs outputs reports configs/experiments/generated_ablation_configs
@@ -43,7 +44,9 @@ echo "Generating ablation configs and manifest..."
 python scripts/make_bbbp_frozen_ablation_configs.py
 
 MANIFEST="configs/experiments/generated_ablation_configs/bbbp_frozen_ablation_manifest.csv"
-DATA_DIR="data/processed/bbbp/d0ae770c_stratified_s42"
+: "${VINO_DATA_DIR:?Export VINO_DATA_DIR with the immutable scaffold-split cache path}"
+export VINO_DATA_DIR
+DATA_DIR="${VINO_DATA_DIR}"
 SUMMARY_CSV="reports/bbbp_frozen_ablation_suite_${SLURM_JOB_ID}.csv"
 
 test -f "${MANIFEST}"
@@ -71,7 +74,7 @@ import time
 from pathlib import Path
 
 MANIFEST = Path("configs/experiments/generated_ablation_configs/bbbp_frozen_ablation_manifest.csv")
-DATA_DIR = "data/processed/bbbp/d0ae770c_stratified_s42"
+DATA_DIR = os.environ["VINO_DATA_DIR"]
 SLURM_JOB_ID = os.environ.get("SLURM_JOB_ID", "local")
 SUMMARY_CSV = Path(f"reports/bbbp_frozen_ablation_suite_{SLURM_JOB_ID}.csv")
 

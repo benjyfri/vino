@@ -16,15 +16,18 @@
 
 set -euo pipefail
 
-source /home/benjamin.fri/miniconda3/etc/profile.d/conda.sh
+VINO_ROOT="${VINO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
+CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
+source "${CONDA_SH}"
 conda activate vino
 
-cd /home/benjamin.fri/PycharmProjects/vino
+cd "${VINO_ROOT}"
 
 SEEDS=(42 1337 2025 3407 9001)
 SEED=${SEEDS[$SLURM_ARRAY_TASK_ID]}
 
-DATA_DIR="data/processed/bbbp/d0ae770c_stratified_s42"
+: "${VINO_DATA_DIR:?Export VINO_DATA_DIR with the immutable scaffold-split cache path}"
+DATA_DIR="${VINO_DATA_DIR}"
 OUT_DIR="outputs/bbbp_full_dino_resize_seed${SEED}_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 
 echo "============================================================"

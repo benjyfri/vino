@@ -18,8 +18,12 @@ def compute_apsp_heat_kernel(
         W.fill_diagonal_(diagonal_value)
         return W
         
+    if edge_index.device.type != "cpu":
+        raise ValueError("compute_apsp_heat_kernel expects CPU edge_index")
+    if sigma <= 0 or power <= 0:
+        raise ValueError("sigma and power must be positive")
     # Build adjacency
-    row, col = edge_index.numpy()
+    row, col = edge_index.detach().numpy()
     data = np.ones_like(row, dtype=float)
     adj = csr_matrix((data, (row, col)), shape=(num_nodes, num_nodes))
     

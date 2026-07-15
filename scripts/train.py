@@ -4,116 +4,31 @@ import json
 import platform
 import subprocess
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from omegaconf import OmegaConf
 from vino.models.graph_image_model import GraphImageModel
-from vino.training.losses import binary_cross_entropy_with_logits, masked_multitask_bce, mse_loss
-from vino.training.metrics import compute_binary_metrics, compute_multitask_metrics, compute_regression_metrics
+from vino.data.cache_dataset import CachedGraphDataset, collate_cached_graphs
+from vino.training.evaluator import evaluate_model, task_loss
+from vino.training.trainer import EarlyStopping, autocast_context, infer_binary_pos_weight, resolve_selection_value
 from vino.utils.seed import seed_everything, seed_worker
 from vino.utils.hashing import hash_config, hash_preprocessing_config
 
-from vino.transforms.model_input import transform_graph_image_for_model
 from vino.utils.io import validate_result
 from vino.utils.sweep import apply_frozen_sweep_overrides
+from vino.utils.config_schema import validate_config
 
-class CachedGraphDataset(Dataset):
-    def __init__(self, data_dir, model_config=None):
-        self.files = [os.path.join(data_dir, f) for f in sorted(os.listdir(data_dir)) if f.endswith('.pt')]
-        self.model_config = model_config or {}
-        
-    def __len__(self):
-        return len(self.files)
-        
-    def __getitem__(self, idx):
-        data = torch.load(self.files[idx], map_location="cpu", weights_only=False)
-        input_mode = self.model_config.get("input_mode")
-        if input_mode:
-            if "valid_node_mask" in data:
-                mask = data["valid_node_mask"]
-            else:
-                num_nodes = data.get("num_nodes", data["image"].size(1))
-                mask = torch.zeros(data["image"].size(1), dtype=torch.bool)
-                mask[:num_nodes] = True
-                
-            transformed = transform_graph_image_for_model(
-                image=data["image"],
-                valid_node_mask=mask,
-                input_mode=input_mode,
-                input_size=self.model_config.get("input_size", 224),
-                patch_size=self.model_config.get("patch_size", 16),
-                token_grid_size=self.model_config.get("token_grid_size", None),
-                resize_mode=self.model_config.get("resize_mode", "bilinear")
-            )
-            
-            data["image"] = transformed["image"]
-            data["n_valid"] = transformed["n_valid"]
-            if transformed["valid_token_mask"] is not None:
-                data["valid_token_mask"] = transformed["valid_token_mask"]
-            data["input_mode"] = transformed["input_mode"]
-            data["model_input_size"] = transformed["model_input_size"]
-            
-        return data
+collate_fn = collate_cached_graphs
 
-def collate_fn(batch):
-    images = torch.stack([b["image"] for b in batch])
-    y = torch.stack([b["y"] for b in batch]).view(len(batch), -1)
-    ret = {"image": images, "y": y, "graph_id": [b["graph_id"] for b in batch]}
-    if "valid_token_mask" in batch[0]:
-        ret["valid_token_mask"] = torch.stack([b["valid_token_mask"] for b in batch])
-    if "n_valid" in batch[0]:
-        ret["n_valid"] = [b["n_valid"] for b in batch]
-    if "input_mode" in batch[0]:
-        ret["input_mode"] = batch[0]["input_mode"]
-    if "model_input_size" in batch[0]:
-        ret["model_input_size"] = batch[0]["model_input_size"]
-    return ret
 
-def evaluate(model, loader, config_dict):
-    device = next(model.parameters()).device
+def evaluate(model, loader, config_dict, pos_weight=None):
     model_cfg = _cfg_get(config_dict, "model", {})
-    model.eval()
-    total_loss = 0
-    all_preds = []
-    all_targets = []
-    
-    with torch.no_grad():
-        for batch in loader:
-            images = batch["image"].to(device, non_blocking=True)
-            images = _apply_channel_ablation(images, model_cfg)
-            y = batch["y"].to(device, non_blocking=True)
-            valid_token_mask = batch.get("valid_token_mask")
-            if valid_token_mask is not None:
-                valid_token_mask = valid_token_mask.to(device, non_blocking=True)
-                
-            out = model(images, valid_token_mask=valid_token_mask)
-            task_type = config_dict.get("train", {}).get("task_type", "unknown")
-            if task_type == "binary_classification":
-                loss = binary_cross_entropy_with_logits(out, y)
-            elif task_type == "multitask_classification":
-                loss = masked_multitask_bce(out, y)
-            else:
-                loss = mse_loss(out, y)
-            total_loss += loss.item()
-            all_preds.append(out)
-            all_targets.append(y)
-            
-    if len(loader) == 0:
-        return {"loss": float("inf")}
-        
-    epoch_loss = total_loss / len(loader)
-    preds = torch.cat(all_preds, dim=0)
-    targets = torch.cat(all_targets, dim=0)
-    
     task_type = config_dict.get("train", {}).get("task_type", "unknown")
-    if task_type == "binary_classification":
-        metrics = compute_binary_metrics(preds, targets)
-    elif task_type == "multitask_classification":
-        metrics = compute_multitask_metrics(preds, targets)
-    else:
-        metrics = compute_regression_metrics(preds, targets)
-        
-    metrics["loss"] = epoch_loss
-    return metrics
+    return evaluate_model(
+        model, loader, task_type,
+        channel_transform=lambda images: _apply_channel_ablation(images, model_cfg),
+        pos_weight=pos_weight,
+        dataset_name=config_dict.get("dataset", {}).get("dataset"),
+    )
 
 def _cfg_get(cfg, key, default=None):
     """Small helper supporting dict/OmegaConf-style configs."""
@@ -192,6 +107,7 @@ def main():
         config.image = OmegaConf.load(args.image_config)
     if args.num_workers is not None:
         config.train.num_workers = args.num_workers
+    validate_config(config, require_experiment=True)
     required = {
         "model": ["backbone_name", "freeze_mode", "normalize_lvd_imagenet", "input_adapter", "head"],
         "train": ["batch_size", "epochs", "lr_head", "lr_backbone", "weight_decay", "grad_clip", "task_type"],
@@ -246,7 +162,10 @@ def main():
         raise ValueError(f"Training cache is empty: {train_dir}")
     generator = torch.Generator().manual_seed(seed)
     loader_kwargs = {"batch_size": config.train.batch_size, "collate_fn": collate_fn,
-                     "num_workers": int(config.train.get("num_workers", 0)), "worker_init_fn": seed_worker}
+                     "num_workers": int(config.train.get("num_workers", 0)), "worker_init_fn": seed_worker,
+                     "pin_memory": bool(config.train.get("pin_memory", torch.cuda.is_available()))}
+    if loader_kwargs["num_workers"] > 0:
+        loader_kwargs["persistent_workers"] = bool(config.train.get("persistent_workers", False))
     train_loader = DataLoader(train_dataset, shuffle=True, generator=generator, **loader_kwargs)
     
     val_dir = os.path.join(data_dir, "val")
@@ -309,6 +228,10 @@ def main():
         {"params": head_params, "lr": config.train.lr_head},
         {"params": backbone_params, "lr": config.train.lr_backbone}
     ], weight_decay=config.train.weight_decay)
+    pos_weight = infer_binary_pos_weight(train_dataset, config.train.get("pos_weight")) \
+        if config.train.task_type == "binary_classification" else None
+    amp_enabled = bool(config.train.get("amp", False)) and device.type == "cuda"
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
     
     epochs = config.train.epochs
     
@@ -324,6 +247,10 @@ def main():
     metric_mode = str(config.train.get("metric_mode", "min"))
     if metric_mode not in {"min", "max"}:
         raise ValueError(f"metric_mode must be 'min' or 'max', got {metric_mode!r}")
+    stopper = EarlyStopping(
+        patience=int(config.train.get("early_stopping_patience", 0)), mode=metric_mode,
+        min_delta=float(config.train.get("min_delta", 0.0)),
+    )
     
     # Pre-save a best checkpoint in case epochs=0
     torch.save(model.state_dict(), os.path.join(out_dir, "checkpoint_best.pt"))
@@ -343,8 +270,10 @@ def main():
             if valid_token_mask is not None:
                 valid_token_mask = valid_token_mask.to(device, non_blocking=True)
                 
-            optimizer.zero_grad()
-            out = model(images, valid_token_mask=valid_token_mask)
+            optimizer.zero_grad(set_to_none=True)
+            with autocast_context(device, amp_enabled):
+                out = model(images, valid_token_mask=valid_token_mask)
+                loss = task_loss(out, y, config.train.task_type, pos_weight=pos_weight)
             
             if not printed_first_batch_debug:
                 printed_first_batch_debug = True
@@ -363,16 +292,11 @@ def main():
                         )
                     }, step=epoch)
 
-            if config.train.task_type == "binary_classification":
-                loss = binary_cross_entropy_with_logits(out, y)
-            elif config.train.task_type == "multitask_classification":
-                loss = masked_multitask_bce(out, y)
-            else:
-                loss = mse_loss(out, y)
-                
-            loss.backward()
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.train.grad_clip)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             total_loss += loss.item()
             
         epoch_loss = total_loss / len(train_loader)
@@ -384,23 +308,10 @@ def main():
         
         is_best = False
         if val_loader is not None:
-            val_metrics = evaluate(model, val_loader, config_dict)
+            val_metrics = evaluate(model, val_loader, config_dict, pos_weight=pos_weight)
             log_entry.update({f"val_{key}": value for key, value in val_metrics.items()})
-            metric_key = metric_for_best.removeprefix("val_")
-            if metric_key not in val_metrics:
-                raise ValueError(f"Configured metric_for_best {metric_for_best!r} was not computed")
-            current_metric = val_metrics[metric_key]
-            if current_metric is None:
-                current_metric = val_metrics["loss"]
-                
-            if best_val_metric_val is None:
-                is_best = True
-            else:
-                if metric_mode == "max":
-                    is_best = current_metric > best_val_metric_val
-                else:
-                    is_best = current_metric < best_val_metric_val
-                    
+            current_metric = resolve_selection_value(val_metrics, metric_for_best, metric_mode)
+            is_best, should_stop = stopper.update(current_metric)
             if is_best:
                 best_val_metric_val = current_metric
                 
@@ -420,6 +331,9 @@ def main():
         metrics_file.flush()
         if wandb_run is not None:
             wandb_run.log(log_entry, step=epoch)
+        if val_loader is not None and should_stop:
+            print(f"Early stopping after epoch {epoch}", flush=True)
+            break
         
     metrics_file.close()
         
@@ -432,11 +346,11 @@ def main():
         
     val_final_metrics = None
     if val_loader is not None:
-        val_final_metrics = evaluate(model, val_loader, config_dict)
+        val_final_metrics = evaluate(model, val_loader, config_dict, pos_weight=pos_weight)
         
     test_metrics = None
     if test_loader is not None:
-        test_metrics = evaluate(model, test_loader, config_dict)
+        test_metrics = evaluate(model, test_loader, config_dict, pos_weight=pos_weight)
 
     result = {
         "dataset": dataset_name,
@@ -445,7 +359,7 @@ def main():
         "freeze_mode": config_dict.get("model", {}).get("freeze_mode", "unknown"),
         "seed": seed,
         "best_epoch": best_epoch,
-        "final_epoch": epochs - 1 if epochs > 0 else 0,
+        "final_epoch": epoch if epochs > 0 else 0,
         "train_loss": epoch_loss if epochs > 0 else float('inf'),
         "best_train_loss": best_train_loss,
         "val_metric": val_final_metrics["roc_auc"] if val_final_metrics and "roc_auc" in val_final_metrics and val_final_metrics["roc_auc"] is not None else (val_final_metrics["loss"] if val_final_metrics else None),
@@ -458,6 +372,8 @@ def main():
         "test_roc_auc": test_metrics.get("roc_auc") if test_metrics else None,
         "metric_for_best": metric_for_best,
         "metric_mode": metric_mode,
+        "amp_enabled": amp_enabled,
+        "pos_weight": pos_weight,
         "input_mode": model_cfg.get("input_mode"),
         "model_input_size": model_cfg.get("input_size") if model_cfg.get("input_mode") == "resize_bilinear" else (model_cfg.get("token_grid_size", 0) * model_cfg.get("patch_size", 16) if model_cfg.get("input_mode") == "patch_aligned_repeat" else None),
         "patch_size": model_cfg.get("patch_size"),

@@ -10,6 +10,7 @@ def get_prop_operator(num_nodes: int, edge_index: torch.Tensor, eps: float = 1e-
     A = torch.zeros((num_nodes, num_nodes))
     if edge_index.size(1) > 0:
         A[edge_index[0], edge_index[1]] = 1.0
+        A[edge_index[1], edge_index[0]] = 1.0
     A.fill_diagonal_(1.0)
     
     deg = A.sum(dim=1)
@@ -18,6 +19,7 @@ def get_prop_operator(num_nodes: int, edge_index: torch.Tensor, eps: float = 1e-
     return D_inv_sqrt @ A @ D_inv_sqrt
 
 def make_graph_image(record: GraphRecord, config: Dict[str, Any]) -> Dict[str, Any]:
+    record.validate()
     n = record.num_nodes
     img_cfg = config["image"]
     N_max = img_cfg["n_max"]
@@ -35,7 +37,9 @@ def make_graph_image(record: GraphRecord, config: Dict[str, Any]) -> Dict[str, A
     elif topology_mode == "apsp_heat":
         W_top = compute_apsp_heat_kernel(
             n, record.edge_index, sigma=img_cfg["topology"]["sigma"],
-            power=img_cfg["topology"]["power"]
+            power=img_cfg["topology"]["power"],
+            disconnected_value=img_cfg["topology"].get("disconnected_value", 0.0),
+            diagonal_value=img_cfg["topology"].get("diagonal_value", 1.0),
         )
     else:
         raise ValueError(f"Unknown topology mode: {topology_mode}")
@@ -45,7 +49,13 @@ def make_graph_image(record: GraphRecord, config: Dict[str, Any]) -> Dict[str, A
         generator = torch.Generator().manual_seed(int(img_cfg["canonicalization"].get("seed", 42)))
         order, meta = torch.randperm(n, generator=generator), {"canonicalization_unstable": False}
     elif canonical_mode == "fiedler_apsp":
-        order, meta = canonicalize_topology(W_top)
+        canonical_cfg = img_cfg.get("canonicalization", {})
+        order, meta = canonicalize_topology(
+            W_top,
+            eigengap_tol=canonical_cfg.get("eigengap_tol", 1e-6),
+            tie_tol=canonical_cfg.get("tie_tol", 1e-8),
+            lex_round_decimals=canonical_cfg.get("lex_round_decimals", 8),
+        )
     else:
         raise ValueError(f"Unknown canonicalization mode: {canonical_mode}")
     
@@ -53,24 +63,30 @@ def make_graph_image(record: GraphRecord, config: Dict[str, Any]) -> Dict[str, A
     A_prop = get_prop_operator(n, record.edge_index)
     
     enabled = set(img_cfg.get("channels", ["topology", "node_cov", "edge_cov"]))
-    if "node_cov" in enabled:
+    node_cfg = img_cfg.get("node_cov", {})
+    if "node_cov" in enabled and node_cfg.get("enabled", True):
         x = record.x if record.x is not None else torch.zeros((n, 1))
         K_node = compute_node_covariance(
             x, A_prop, h_node=img_cfg["node_cov"]["h"], seed=img_cfg["node_cov"]["seed"],
-            powers=img_cfg["propagation"]["powers"], weights=img_cfg["propagation"]["weights"]
+            powers=img_cfg["propagation"]["powers"], weights=img_cfg["propagation"]["weights"],
+            robust_quantile=node_cfg.get("robust_quantile", 0.95),
+            clip=node_cfg.get("clip", 1.0),
         )
     else:
         K_node = torch.zeros_like(W_top)
     
     # Edge Covariance
-    if "edge_cov" in enabled:
+    edge_cfg = img_cfg.get("edge_cov", {})
+    if "edge_cov" in enabled and edge_cfg.get("enabled", True):
         edge_attr = record.edge_attr
         if edge_attr is None or edge_attr.size(1) == 0:
             edge_attr = torch.ones((record.edge_index.size(1), 1))
         K_edge = compute_edge_covariance(
             n, record.edge_index, edge_attr, A_prop, h_edge=img_cfg["edge_cov"]["h"],
             seed=img_cfg["edge_cov"]["seed"], powers=img_cfg["propagation"]["powers"],
-            weights=img_cfg["propagation"]["weights"]
+            weights=img_cfg["propagation"]["weights"],
+            robust_quantile=edge_cfg.get("robust_quantile", 0.95),
+            clip=edge_cfg.get("clip", 1.0),
         )
     else:
         K_edge = torch.zeros_like(W_top)
@@ -90,10 +106,16 @@ def make_graph_image(record: GraphRecord, config: Dict[str, Any]) -> Dict[str, A
     ], dim=0)
     
     # Pad
-    padded_image = torch.full((3, N_max, N_max), img_cfg["pad_value"], dtype=torch.float32)
-    padded_image[:, :n, :n] = image
+    storage = img_cfg.get("storage", "padded")
+    if storage == "cropped":
+        padded_image = image
+        mask_size = n
+    else:
+        padded_image = torch.full((3, N_max, N_max), img_cfg["pad_value"], dtype=torch.float32)
+        padded_image[:, :n, :n] = image
+        mask_size = N_max
     
-    valid_node_mask = torch.zeros(N_max, dtype=torch.bool)
+    valid_node_mask = torch.zeros(mask_size, dtype=torch.bool)
     valid_node_mask[:n] = True
     
     valid_pixel_mask = valid_node_mask.unsqueeze(0) & valid_node_mask.unsqueeze(1)
@@ -101,6 +123,8 @@ def make_graph_image(record: GraphRecord, config: Dict[str, Any]) -> Dict[str, A
     # Update meta
     meta["num_nodes"] = n
     meta["num_edges"] = record.edge_index.size(1)
+    meta["cache_format_version"] = int(img_cfg.get("cache_format_version", 2))
+    meta["storage"] = storage
     
     return {
         "image": padded_image,

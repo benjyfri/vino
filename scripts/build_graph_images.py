@@ -3,6 +3,8 @@ import os
 import platform
 import subprocess
 import json
+import hashlib
+import uuid
 import torch
 from omegaconf import OmegaConf
 from datetime import datetime
@@ -39,11 +41,13 @@ def main():
     dataset_cfg = config_dict.get("dataset", {})
     dataset_name = dataset_cfg.get("dataset", "unknown") if isinstance(dataset_cfg, dict) else dataset_cfg
         
-    out_dir = os.path.join(args.output_dir, dataset_name, conf_hash)
+    final_out_dir = os.path.join(args.output_dir, dataset_name, conf_hash)
     if args.overwrite:
         raise ValueError("--overwrite is disabled: cached datasets are immutable")
-    if os.path.exists(out_dir):
-        raise FileExistsError(f"Cache already exists: {out_dir}")
+    if os.path.exists(final_out_dir):
+        raise FileExistsError(f"Cache already exists: {final_out_dir}")
+    os.makedirs(os.path.dirname(final_out_dir), exist_ok=True)
+    out_dir = f"{final_out_dir}.staging-{uuid.uuid4().hex}"
     os.makedirs(out_dir, exist_ok=False)
     
     if dataset_name == "synthetic":
@@ -61,11 +65,18 @@ def main():
         from vino.data.pyg_loaders import load_bbbp
         dconf = config_dict["dataset"] if "dataset" in config_dict else config_dict
         limit = dconf.get("limit")
-        records = load_bbbp(limit=limit, split_seed=int(dconf.get("split_seed", 42)))
+        records = load_bbbp(
+            limit=limit, split_seed=int(dconf.get("split_seed", 42)),
+            split_strategy=dconf.get("split_strategy", "scaffold"), root=dconf.get("root", "data/pyg"),
+        )
     elif dataset_name == "molhiv":
         from vino.data.pyg_loaders import load_molhiv
         dconf = config_dict["dataset"]
         records = load_molhiv(root=dconf.get("root", "data/ogb"))
+    elif dataset_name == "esol":
+        from vino.data.pyg_loaders import load_esol
+        dconf = config_dict["dataset"]
+        records = load_esol(root=dconf.get("root", "data/pyg"), split_seed=int(dconf.get("split_seed", 42)))
     else:
         raise ValueError(f"Unknown dataset {dataset_name}")
         
@@ -74,6 +85,7 @@ def main():
     num_success = 0
     num_failed = 0
     first_failure = None
+    saved_graph_ids = {"train": [], "val": [], "test": []}
     
     for r in tqdm(records, desc="Processing graphs"):
         split_dir = os.path.join(out_dir, r.split)
@@ -86,6 +98,7 @@ def main():
             validate_cached_graph(img_data)
             torch.save(img_data, os.path.join(split_dir, f"{r.graph_id}.pt"))
             splits[r.split] += 1
+            saved_graph_ids[r.split].append(r.graph_id)
             num_success += 1
         except Exception as e:
             num_failed += 1
@@ -94,8 +107,18 @@ def main():
             with open(os.path.join(out_dir, "failures.jsonl"), "a") as f:
                 f.write(json.dumps({"graph_id": r.graph_id, "error": str(e)}) + "\n")
                 
-    if num_success == 0 and num_total > 0:
-        raise RuntimeError(f"All graph conversions failed for dataset {dataset_name} at {out_dir}. First failure: {first_failure}")
+    failure_fraction = num_failed / num_total if num_total else 0.0
+    max_failure_fraction = float(config_dict.get("image", {}).get("max_failure_fraction", 0.0))
+    if failure_fraction > max_failure_fraction:
+        raise RuntimeError(
+            f"Graph conversion failure fraction {failure_fraction:.6f} exceeds configured maximum "
+            f"{max_failure_fraction:.6f}. Staging cache retained at {out_dir}. First failure: {first_failure}"
+        )
+
+    split_checksums = {
+        split: hashlib.sha256("\n".join(sorted(ids)).encode()).hexdigest()
+        for split, ids in saved_graph_ids.items()
+    }
                 
     manifest = {
         "dataset": dataset_name,
@@ -103,11 +126,14 @@ def main():
         "num_total": num_total,
         "num_success": num_success,
         "num_failed": num_failed,
-        "output_dir": out_dir,
+        "output_dir": final_out_dir,
         "config_hash": conf_hash,
+        "cache_format_version": int(config_dict.get("image", {}).get("cache_format_version", 2)),
         "split_strategy": config_dict.get("dataset", {}).get("split_strategy", "ogb_official" if dataset_name == "molhiv" else "generated"),
         "split_seed": config_dict.get("dataset", {}).get("split_seed"),
-        "split_graph_ids": {s: sorted(r.graph_id for r in records if r.split == s) for s in splits},
+        "split_graph_ids": {s: sorted(ids) for s, ids in saved_graph_ids.items()},
+        "split_checksums": split_checksums,
+        "failure_fraction": failure_fraction,
         "python_version": platform.python_version(),
         "torch_version": torch.__version__,
         "git_revision": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False).stdout.strip() or None,
@@ -120,7 +146,8 @@ def main():
     with open(os.path.join(out_dir, "config_resolved.yaml"), "w") as f:
         OmegaConf.save(config, f)
         
-    print(f"Done. Saved to {out_dir}")
+    os.replace(out_dir, final_out_dir)
+    print(f"Done. Saved to {final_out_dir}")
 
 if __name__ == "__main__":
     main()

@@ -3,7 +3,9 @@ import torch.nn as nn
 from transformers import AutoModel
 
 class DinoV3Backbone(nn.Module):
-    def __init__(self, model_name: str = "facebook/dinov3-vits16-pretrain-lvd1689m", freeze_mode: str = "frozen", pretrained_path: str = None):
+    def __init__(self, model_name: str = "facebook/dinov3-vits16-pretrain-lvd1689m",
+                 freeze_mode: str = "frozen", pretrained_path: str = None,
+                 pooling: str = "auto", revision: str | None = None):
         super().__init__()
         # Tiny dummy model for tests
         if "tiny" in model_name and "dinov3" not in model_name:
@@ -11,10 +13,11 @@ class DinoV3Backbone(nn.Module):
         else:
             path = pretrained_path if pretrained_path else model_name
             try:
-                self.model = AutoModel.from_pretrained(path)
+                self.model = AutoModel.from_pretrained(path, revision=revision)
             except Exception as exc:
                 raise RuntimeError(f"Failed to load requested pretrained backbone {path!r}") from exc
         self.output_dim = self._output_dim()
+        self.pooling = pooling
                 
         self.apply_freeze(freeze_mode)
         
@@ -27,11 +30,15 @@ class DinoV3Backbone(nn.Module):
             outputs = self.model(**kwargs)
         except TypeError:
             outputs = self.model(pixel_values=pixel_values)
-        if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+        if self.pooling == "auto" and hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
             return outputs.pooler_output
         elif hasattr(outputs, "last_hidden_state"):
             hidden = outputs.last_hidden_state
-            return hidden[:, 0] if hidden.ndim == 3 else hidden.mean(dim=tuple(range(2, hidden.ndim)))
+            if hidden.ndim == 3:
+                if self.pooling == "mean":
+                    return hidden.mean(dim=1)
+                return hidden[:, 0]
+            return hidden.mean(dim=tuple(range(2, hidden.ndim)))
         else:
             return outputs[0][:, 0]
 

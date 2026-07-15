@@ -1,3 +1,5 @@
 dataset: esol
 root: data/raw
 task_type: regression
+split_strategy: scaffold
+split_seed: 42

@@ -25,9 +25,10 @@ echo "SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID:-NA}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-NA}"
 echo "============================================================"
 
-cd /home/benjamin.fri/PycharmProjects/vino
-
-source ~/miniconda3/etc/profile.d/conda.sh
+VINO_ROOT="${VINO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
+CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
+cd "${VINO_ROOT}"
+source "${CONDA_SH}"
 conda activate vino
 
 mkdir -p outputs
@@ -57,7 +58,8 @@ VARIANT="${VARIANTS[$VARIANT_IDX]}"
 SEED="${SEEDS[$SEED_IDX]}"
 
 CONFIG="configs/experiments/bbbp_full_resize_vits16_${VARIANT}.yaml"
-DATA_DIR="data/processed/bbbp/d0ae770c_stratified_s42"
+: "${VINO_DATA_DIR:?Export VINO_DATA_DIR with the immutable scaffold-split cache path}"
+DATA_DIR="${VINO_DATA_DIR}"
 OUT_DIR="outputs/bbbp_dino_interface_${VARIANT}_seed${SEED}_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 
 echo

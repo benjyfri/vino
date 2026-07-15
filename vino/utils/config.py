@@ -49,8 +49,16 @@ def _load(path: Path, seen: set[Path]) -> DictConfig:
     return OmegaConf.merge(merged, cfg)
 
 def load_resolved_config(config_path: str | Path) -> DictConfig:
-    cfg = _load(Path(config_path), set())
+    path = Path(config_path)
+    cfg = _load(path, set())
+    # Standalone config-group files are valid CLI inputs as well as composition
+    # fragments. Normalize them to the same experiment-shaped structure.
+    group = path.parent.name
+    if group in CONFIG_GROUPS:
+        cfg = OmegaConf.create({CONFIG_GROUPS[group]: cfg})
     for key in ("dataset", "image", "model", "train"):
         if key not in cfg:
             cfg[key] = OmegaConf.create({})
+    from .config_schema import validate_config
+    validate_config(cfg)
     return cfg

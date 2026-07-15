@@ -37,3 +37,15 @@ def compute_regression_metrics(preds: torch.Tensor, targets: torch.Tensor):
     mse = mean_squared_error(t, p)
     mae = mean_absolute_error(t, p)
     return {"rmse": float(np.sqrt(mse)), "mae": float(mae), "mse": float(mse)}
+
+
+def compute_ogb_graph_metrics(dataset_name: str, preds: torch.Tensor, targets: torch.Tensor):
+    """Use the benchmark's official evaluator rather than reimplementing semantics."""
+    try:
+        from ogb.graphproppred import Evaluator
+    except ImportError as exc:
+        raise ImportError("ogb is required for official OGB evaluation") from exc
+    ogb_name = dataset_name if dataset_name.startswith("ogbg-") else f"ogbg-{dataset_name}"
+    evaluator = Evaluator(name=ogb_name)
+    result = evaluator.eval({"y_true": targets.numpy(), "y_pred": preds.numpy()})
+    return {key.replace("rocauc", "roc_auc"): float(value) for key, value in result.items()}

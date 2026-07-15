@@ -22,13 +22,15 @@ echo "Partition: ${SLURM_JOB_PARTITION:-none}"
 echo "Account: dym-lab"
 echo "QOS: normal"
 echo "Node list: ${SLURM_JOB_NODELIST:-none}"
-echo "Repo: /home/benjamin.fri/PycharmProjects/vino"
+echo "Repo: ${VINO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
 echo "============================================================"
 
-source /home/benjamin.fri/miniconda3/etc/profile.d/conda.sh
+VINO_ROOT="${VINO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
+CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
+source "${CONDA_SH}"
 conda activate vino
 
-cd /home/benjamin.fri/PycharmProjects/vino
+cd "${VINO_ROOT}"
 
 mkdir -p logs outputs
 
@@ -47,11 +49,14 @@ python -m compileall scripts vino tests
 python -m pytest -q -rs
 
 echo "[cache check]"
+: "${VINO_DATA_DIR:?Export VINO_DATA_DIR with the immutable scaffold-split cache path}"
+export VINO_DATA_DIR
 python - <<'PY'
 import json
+import os
 from pathlib import Path
 
-manifest = Path("data/processed/bbbp/d0ae770c/manifest.json")
+manifest = Path(os.environ["VINO_DATA_DIR"]) / "manifest.json"
 if not manifest.exists():
     raise FileNotFoundError(f"Missing full BBBP manifest: {manifest}")
 
@@ -68,6 +73,7 @@ OUT_DIR="outputs/bbbp_full_tiny_${SLURM_JOB_ID}"
 echo "[train]"
 python scripts/train.py \
   --config configs/experiments/bbbp_full_debug_tiny.yaml \
+  --data_dir "${VINO_DATA_DIR}" \
   --output_dir "${OUT_DIR}"
 
 echo "[result]"

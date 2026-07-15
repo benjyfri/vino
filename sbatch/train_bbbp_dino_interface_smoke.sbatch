@@ -10,13 +10,16 @@
 #SBATCH --job-name=bbbp_smoke
 #SBATCH --output=logs/bbbp_smoke_%j.out
 
-source ~/miniconda3/etc/profile.d/conda.sh
+VINO_ROOT="${VINO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
+CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
+source "${CONDA_SH}"
 conda activate vino
 
-cd /home/benjamin.fri/PycharmProjects/vino
+cd "${VINO_ROOT}"
 
 CONFIG="configs/experiments/bbbp_full_resize_vits16_residual_stem.yaml"
-DATA_DIR="data/processed/bbbp/d0ae770c_stratified_s42"
+: "${VINO_DATA_DIR:?Export VINO_DATA_DIR with the immutable scaffold-split cache path}"
+DATA_DIR="${VINO_DATA_DIR}"
 OUT_DIR="outputs/bbbp_dino_residual_stem_smoke_seed42_${SLURM_JOB_ID}"
 SEED=42
 

@@ -40,4 +40,4 @@ def test_builder_fail(tmp_path):
         "--output-dir", str(tmp_path / "cache")
     ], capture_output=True, text=True)
     assert result.returncode != 0
-    assert "Unknown dataset unknown" in result.stderr
+    assert "dataset.dataset must be one of" in result.stderr

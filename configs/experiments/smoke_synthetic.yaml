@@ -67,8 +67,8 @@ train:
   amp: false
   grad_clip: 1.0
   early_stopping_patience: 10
-  metric_for_best: "val_roc_auc"
-  metric_mode: "max"
+  metric_for_best: "val_loss"
+  metric_mode: "min"
   seed: 42
   num_workers: 0
   pos_weight: "auto"

@@ -1,7 +1,4 @@
-from setuptools import setup, find_packages
+"""Compatibility shim; project metadata lives exclusively in pyproject.toml."""
+from setuptools import setup
 
-setup(
-    name='vino',
-    version='0.1.0',
-    packages=find_packages(),
-)
+setup()

@@ -41,7 +41,9 @@ def tiny_cached_dataset(tmp_path):
             mask[:n] = True
             torch.save({
                 "image": torch.rand(3, 64, 64), "valid_node_mask": mask,
+                "valid_pixel_mask": mask[:, None] & mask[None, :],
                 "y": torch.tensor([index % 2], dtype=torch.float32),
                 "graph_id": f"{split}_{index}",
+                "metadata": {"cache_format_version": 2, "num_nodes": n},
             }, root / split / f"{index}.pt")
     return root

@@ -68,11 +68,8 @@ def set_head_cfg(cfg: dict, head_name: str, lr=None, weight_decay=None, dropout=
 
     model["head_ablation_name"] = head_name
 
-    # These keys are deliberately duplicated in likely places because repos differ.
-    # Existing code will use whichever schema it expects.
     if lr is not None:
-        train["lr"] = lr
-        train["learning_rate"] = lr
+        train["lr_head"] = lr
     if weight_decay is not None:
         train["weight_decay"] = weight_decay
     if dropout is not None:

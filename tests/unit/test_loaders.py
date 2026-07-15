@@ -25,8 +25,8 @@ class FakeMoleculeNet:
 
 def test_load_bbbp_uses_reproducible_stratified_splits():
     with patch("torch_geometric.datasets.MoleculeNet", FakeMoleculeNet):
-        first = load_bbbp(split_seed=17)
-        second = load_bbbp(split_seed=17)
+        first = load_bbbp(split_seed=17, split_strategy="stratified_random")
+        second = load_bbbp(split_seed=17, split_strategy="stratified_random")
     assert [(r.graph_id, r.split) for r in first] == [(r.graph_id, r.split) for r in second]
     assert {r.split for r in first} == {"train", "val", "test"}
     for split in ("train", "val", "test"):

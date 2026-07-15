@@ -19,10 +19,16 @@ class GraphImageModel(nn.Module):
             self.normalize = nn.Identity()
             
         # Adapter
-        if config["model"]["input_adapter"]["type"] == "conv1x1":
-            self.adapter = Conv1x1Adapter()
-        else:
+        adapter_config = config["model"]["input_adapter"]
+        if adapter_config["type"] == "conv1x1":
+            self.adapter = Conv1x1Adapter(
+                in_channels=int(adapter_config.get("in_channels", 3)),
+                out_channels=int(adapter_config.get("out_channels", 3)),
+            )
+        elif adapter_config["type"] == "identity":
             self.adapter = IdentityAdapter()
+        else:
+            raise ValueError(f"Unknown input adapter type: {adapter_config['type']}")
             
         # Input stem
         stem_config = config["model"].get("input_stem", {})
@@ -32,7 +38,9 @@ class GraphImageModel(nn.Module):
         self.backbone = DinoV3Backbone(
             model_name=config["model"]["backbone_name"],
             freeze_mode=config["model"]["freeze_mode"],
-            pretrained_path=config["model"]["pretrained_path"]
+            pretrained_path=config["model"]["pretrained_path"],
+            pooling=config["model"].get("pooling", "auto"),
+            revision=config["model"].get("pretrained_revision"),
         )
         
         emb_dim = self.backbone.output_dim
@@ -62,6 +70,9 @@ class GraphImageModel(nn.Module):
             
     def forward(self, images, valid_token_mask=None):
         x = self.normalize(images)
+        if valid_token_mask is not None:
+            input_mask = F.interpolate(valid_token_mask[:, None].float(), size=x.shape[-2:], mode="nearest")
+            x = x * input_mask
         x = self.input_stem(x)
         x = self.adapter(x)
         if valid_token_mask is not None:

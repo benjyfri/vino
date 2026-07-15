@@ -13,4 +13,7 @@ def hash_preprocessing_config(config_dict: dict) -> str:
     """Hash only inputs that determine cached graph-image contents."""
     if OmegaConf.is_config(config_dict):
         config_dict = OmegaConf.to_container(config_dict, resolve=True)
-    return hash_config({key: config_dict.get(key, {}) for key in ("dataset", "image")})
+    return hash_config({
+        "cache_schema": 2,
+        **{key: config_dict.get(key, {}) for key in ("dataset", "image")},
+    })
