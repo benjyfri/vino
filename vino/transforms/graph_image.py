@@ -1,6 +1,7 @@
 import torch
 from .shortest_paths import compute_apsp_heat_kernel
 from .canonicalize import canonicalize_topology
+from .fiedler_sign import build_sign_context
 from .covariance import compute_node_covariance
 from .edge_covariance import compute_edge_covariance
 from ..data.graph_record import GraphRecord
@@ -50,11 +51,19 @@ def make_graph_image(record: GraphRecord, config: Dict[str, Any]) -> Dict[str, A
         order, meta = torch.randperm(n, generator=generator), {"canonicalization_unstable": False}
     elif canonical_mode == "fiedler_apsp":
         canonical_cfg = img_cfg.get("canonicalization", {})
+        sign_rule = canonical_cfg.get("sign_rule", "fiedler_cascade")
+        sign_pipeline = canonical_cfg.get("sign_pipeline", None)
+        if sign_pipeline is not None:
+            sign_pipeline = list(sign_pipeline)
+        sign_context = build_sign_context(record.x, record.edge_index, record.edge_attr, n)
         order, meta = canonicalize_topology(
             W_top,
             eigengap_tol=canonical_cfg.get("eigengap_tol", 1e-6),
             tie_tol=canonical_cfg.get("tie_tol", 1e-8),
             lex_round_decimals=canonical_cfg.get("lex_round_decimals", 8),
+            sign_rule=sign_rule,
+            sign_pipeline=sign_pipeline,
+            sign_context=sign_context,
         )
     else:
         raise ValueError(f"Unknown canonicalization mode: {canonical_mode}")

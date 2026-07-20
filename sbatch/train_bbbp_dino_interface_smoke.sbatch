@@ -10,6 +10,7 @@
 #SBATCH --job-name=bbbp_smoke
 #SBATCH --output=logs/bbbp_smoke_%j.out
 
+set -euo pipefail
 VINO_ROOT="${VINO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
 CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 source "${CONDA_SH}"

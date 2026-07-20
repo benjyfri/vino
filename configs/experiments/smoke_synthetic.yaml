@@ -21,7 +21,8 @@ image:
   canonicalization:
     mode: "fiedler_apsp"
     laplacian: "symmetric_normalized"
-    sign_rule: "lexicographic_topology"
+    sign_rule: "fiedler_cascade"
+    sign_pipeline: ["skew", "feature_node", "feature_edge", "lex_sorted"]
     eigengap_tol: 1.0e-6
     tie_tol: 1.0e-8
     lex_round_decimals: 8

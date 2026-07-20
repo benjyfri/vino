@@ -8,6 +8,7 @@
 #SBATCH --output=logs/slurm/%x_%j.out
 #SBATCH --error=logs/slurm/%x_%j.err
 
+set -euo pipefail
 cd $SLURM_SUBMIT_DIR
 eval "$(conda shell.bash hook)"
 conda activate vino

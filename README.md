@@ -54,6 +54,33 @@ python scripts/train.py --config configs/experiments/bbbp_finetune_vits16plus.ya
 ## Running Ablations
 Check `configs/image/` for ablation configs and run them with the train script.
 
+The production W&B campaign is a two-stage protocol:
+
+```bash
+# Validate locally; no W&B state is changed.
+python scripts/create_wandb_frozen_sweep.py --dry-run
+
+# Create the Bayesian discovery sweep (remote operation).
+python scripts/create_wandb_frozen_sweep.py --entity <team>
+
+# After discovery, rank by validation ROC-AUC only.
+python scripts/select_best_wandb_ablation.py \
+  --sweep <entity>/vino_bbbp/<sweep-id> \
+  --output-dir .ai/reviews/wandb_discovery_best \
+  --required-seeds 1
+
+# Build a locked five-seed confirmation sweep for the winner.
+python scripts/create_wandb_confirmation_sweep.py \
+  --best .ai/reviews/wandb_discovery_best/best_combination.json \
+  --output .ai/state/bbbp_confirmation_sweep.yaml
+```
+
+The discovery sweep searches DINOv3 backbone/tuning variants, graph channels, resize method,
+stem/head designs, head LR, tuning/backbone-LR profiles, weight decay, clipping, class weighting, and
+coupled input-resolution/batch-size profiles. Profiles range from `224_b64` through `224_b512`,
+`320_b128`, and `448_b64`; each run records peak allocated/reserved GPU memory. This directly
+addresses low-memory-utilization runs while avoiding the worst resolution/batch Cartesian pairs.
+
 Before trusting an experiment config, audit its field-to-runtime mapping:
 
 ```bash

@@ -86,11 +86,12 @@ def main():
     num_failed = 0
     first_failure = None
     saved_graph_ids = {"train": [], "val": [], "test": []}
-    
+    sign_methods = []
+
     for r in tqdm(records, desc="Processing graphs"):
         split_dir = os.path.join(out_dir, r.split)
         os.makedirs(split_dir, exist_ok=True)
-        
+
         try:
             img_data = make_graph_image(r, config_dict)
             img_data["split"] = r.split
@@ -99,6 +100,7 @@ def main():
             torch.save(img_data, os.path.join(split_dir, f"{r.graph_id}.pt"))
             splits[r.split] += 1
             saved_graph_ids[r.split].append(r.graph_id)
+            sign_methods.append(img_data.get("metadata", {}).get("sign_method", "unknown"))
             num_success += 1
         except Exception as e:
             num_failed += 1
@@ -120,16 +122,35 @@ def main():
         for split, ids in saved_graph_ids.items()
     }
                 
+    from vino.transforms.fiedler_sign import (
+        DEFAULT_PIPELINE, canonicalization_signature, summarize_sign_methods,
+    )
+    canon_cfg = config_dict.get("image", {}).get("canonicalization", {}) or {}
+    try:
+        sign_signature = canonicalization_signature(
+            canon_cfg.get("sign_pipeline") or DEFAULT_PIPELINE,
+            canon_cfg.get("sign_rule", "fiedler_cascade"),
+        )
+    except Exception:
+        sign_signature = None
+
     manifest = {
         "dataset": dataset_name,
         "splits": splits,
         "num_total": num_total,
         "num_success": num_success,
         "num_failed": num_failed,
+        "sign_signature": sign_signature,
+        "sign_method_diagnostics": summarize_sign_methods(sign_methods),
         "output_dir": final_out_dir,
         "config_hash": conf_hash,
         "cache_format_version": int(config_dict.get("image", {}).get("cache_format_version", 2)),
-        "split_strategy": config_dict.get("dataset", {}).get("split_strategy", "ogb_official" if dataset_name == "molhiv" else "generated"),
+        "split_strategy": config_dict.get("dataset", {}).get("split_strategy") or {
+            "molhiv": "ogb_official",
+            "bbbp": "scaffold",
+            "esol": "scaffold",
+            "synthetic": "generated",
+        }.get(dataset_name, "generated"),
         "split_seed": config_dict.get("dataset", {}).get("split_seed"),
         "split_graph_ids": {s: sorted(ids) for s, ids in saved_graph_ids.items()},
         "split_checksums": split_checksums,

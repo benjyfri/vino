@@ -117,8 +117,13 @@ def load_molhiv(root: str = "data/ogb") -> List[GraphRecord]:
         raise ImportError("ogb is required to load ogbg-molhiv") from exc
     dataset = PygGraphPropPredDataset(name="ogbg-molhiv", root=root)
     split_idx = dataset.get_idx_split()
+    # OGB names the validation split "valid"; VINO's internal contract (GraphRecord,
+    # build_graph_images) uses "val". Translate before assigning record splits.
+    ogb_split_to_internal = {"train": "train", "valid": "val", "test": "test"}
     split_by_index = {
-        int(i): split for split, values in split_idx.items() for i in values.reshape(-1).tolist()
+        int(i): ogb_split_to_internal[split]
+        for split, values in split_idx.items()
+        for i in values.reshape(-1).tolist()
     }
     records = []
     for i in range(len(dataset)):

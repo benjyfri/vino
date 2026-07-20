@@ -16,6 +16,7 @@ from vino.utils.hashing import hash_config, hash_preprocessing_config
 from vino.utils.io import validate_result
 from vino.utils.sweep import apply_frozen_sweep_overrides
 from vino.utils.config_schema import validate_config
+from vino.models.freeze import set_frozen_modules_eval
 
 collate_fn = collate_cached_graphs
 
@@ -144,6 +145,8 @@ def main():
 
     if args.data_dir is not None:
         data_dir = args.data_dir
+    elif os.environ.get("VINO_DATA_DIR"):
+        data_dir = os.environ["VINO_DATA_DIR"]
     elif "data_dir" in config_dict:
         data_dir = config_dict["data_dir"]
     else:
@@ -206,6 +209,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[device] {device}", flush=True)
     if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
         print(f"[device] cuda name: {torch.cuda.get_device_name(0)}", flush=True)
 
     model = GraphImageModel(config_dict)
@@ -214,7 +218,8 @@ def main():
     print("[debug] model device:", next(model.parameters()).device, flush=True)
     if wandb_run is not None:
         wandb_run.name = "__".join(str(wandb_run.config.get(k, "na")) for k in (
-            "channel_set", "resize_mode", "stem_variant", "head_variant", "seed"
+            "backbone_variant", "tuning_profile", "channel_set", "resource_profile",
+            "resize_mode", "stem_variant", "head_variant", "seed"
         ))
         wandb_run.config.update(config_dict, allow_val_change=True)
     
@@ -259,8 +264,11 @@ def main():
     
     for epoch in range(epochs):
         model.train()
-        if model_cfg.get("freeze_mode") == "frozen":
-            model.backbone.eval()
+        # Keep fully-frozen backbone submodules deterministic. For "frozen" this sets the
+        # whole backbone to eval(); for partial modes (last1/last2/train_patch_embed) it only
+        # affects the frozen layers, leaving trainable layers in train() mode.
+        if model_cfg.get("freeze_mode") != "full":
+            set_frozen_modules_eval(model.backbone)
         total_loss = 0
         for batch in train_loader:
             images = batch["image"].to(device, non_blocking=True)
@@ -374,6 +382,13 @@ def main():
         "metric_mode": metric_mode,
         "amp_enabled": amp_enabled,
         "pos_weight": pos_weight,
+        "batch_size": int(config.train.batch_size),
+        "peak_gpu_memory_allocated_mb": (
+            torch.cuda.max_memory_allocated() / 1024**2 if torch.cuda.is_available() else 0.0
+        ),
+        "peak_gpu_memory_reserved_mb": (
+            torch.cuda.max_memory_reserved() / 1024**2 if torch.cuda.is_available() else 0.0
+        ),
         "input_mode": model_cfg.get("input_mode"),
         "model_input_size": model_cfg.get("input_size") if model_cfg.get("input_mode") == "resize_bilinear" else (model_cfg.get("token_grid_size", 0) * model_cfg.get("patch_size", 16) if model_cfg.get("input_mode") == "patch_aligned_repeat" else None),
         "patch_size": model_cfg.get("patch_size"),
