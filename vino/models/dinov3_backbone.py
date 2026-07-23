@@ -5,11 +5,19 @@ from transformers import AutoModel
 class DinoV3Backbone(nn.Module):
     def __init__(self, model_name: str = "facebook/dinov3-vits16-pretrain-lvd1689m",
                  freeze_mode: str = "frozen", pretrained_path: str = None,
-                 pooling: str = "auto", revision: str | None = None):
+                 pooling: str = "auto", revision: str | None = None,
+                 random_init: bool = False):
         super().__init__()
         # Tiny dummy model for tests
         if "tiny" in model_name and "dinov3" not in model_name:
             self.model = TinyBackbone()
+        elif random_init:
+            # Control condition: build the real architecture with randomly initialized weights
+            # (no pretraining). Used to test whether the pretrained features actually contribute.
+            from transformers import AutoConfig
+            path = pretrained_path if pretrained_path else model_name
+            config = AutoConfig.from_pretrained(path, revision=revision)
+            self.model = AutoModel.from_config(config)
         else:
             path = pretrained_path if pretrained_path else model_name
             try:
@@ -57,23 +65,46 @@ class DinoV3Backbone(nn.Module):
             return
         elif mode == "frozen":
             freeze_all(self.model)
-        elif mode == "last2":
+        elif mode in ("last2", "last1"):
             freeze_all(self.model)
-            # Try to unfreeze last two blocks if it's a ViT
-            if hasattr(self.model, "encoder") and hasattr(self.model.encoder, "layer"):
-                layers = self.model.encoder.layer
-                for layer in layers[-2:]:
-                    unfreeze_module(layer)
-        elif mode == "last1":
-            freeze_all(self.model)
-            if hasattr(self.model, "encoder") and hasattr(self.model.encoder, "layer"):
-                layers = self.model.encoder.layer
-                unfreeze_module(layers[-1])
+            blocks = _find_transformer_blocks(self.model)
+            if blocks is None:
+                raise ValueError(
+                    f"Could not locate transformer blocks to apply freeze mode '{mode}' on "
+                    f"{self.model.__class__.__name__}; refusing to silently train nothing."
+                )
+            k = 2 if mode == "last2" else 1
+            for layer in list(blocks)[-k:]:
+                unfreeze_module(layer)
         elif mode in ["train_patch_embed", "train_stem_and_patch_embed"]:
             freeze_all(self.model)
             set_trainable_patch_embedding(self.model, mode_name=mode)
         else:
             raise ValueError(f"Unknown freeze mode: {mode}")
+
+
+def _find_transformer_blocks(model: nn.Module):
+    """Locate the ModuleList of repeated transformer blocks across HF ViT variants.
+
+    DINOv3 stores blocks at ``model.model.layer``; other HF ViTs use ``encoder.layer`` /
+    ``encoder.layers`` / ``blocks``. Falls back to the largest ModuleList of repeated modules.
+    Returns None if none is found (callers must fail loudly rather than train nothing).
+    """
+    for path in (("encoder", "layer"), ("model", "layer"), ("encoder", "layers"),
+                 ("blocks",), ("layer",), ("layers",)):
+        obj = model
+        for attr in path:
+            obj = getattr(obj, attr, None)
+            if obj is None:
+                break
+        if isinstance(obj, nn.ModuleList) and len(obj) > 0:
+            return obj
+    best = None
+    for _, module in model.named_modules():
+        if isinstance(module, nn.ModuleList) and len(module) >= 2:
+            if best is None or len(module) > len(best):
+                best = module
+    return best
             
 def freeze_all(module: nn.Module):
     for param in module.parameters():

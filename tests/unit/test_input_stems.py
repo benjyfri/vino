@@ -81,3 +81,38 @@ def test_build_input_stem_disabled():
     }
     stem = build_input_stem(config)
     assert isinstance(stem, IdentityStem)
+
+
+def _stn_cfg(t):
+    return {"enabled": True, "type": t, "in_channels": 3, "hidden_channels": 16}
+
+
+def test_affine_stn_is_identity_initialized():
+    import torch
+    from vino.models.input_stems import build_input_stem
+    stn = build_input_stem(_stn_cfg("affine_stn"))
+    x = torch.rand(2, 3, 64, 64)
+    assert torch.allclose(stn(x), x, atol=1e-3)  # near-identity warp at init
+
+
+def test_affine_stn_control_is_parameter_matched_and_non_warping():
+    import torch
+    from vino.models.input_stems import build_input_stem
+    stn = build_input_stem(_stn_cfg("affine_stn"))
+    ctrl = build_input_stem(_stn_cfg("affine_value_control"))
+    assert sum(p.numel() for p in stn.parameters()) == sum(p.numel() for p in ctrl.parameters())
+    # control applies a value affine (no spatial warp); at identity init a=1,b=0 -> ~identity
+    x = torch.rand(2, 3, 32, 32)
+    assert torch.allclose(ctrl(x), x, atol=1e-3)
+
+
+def test_affine_stn_receives_gradient_and_stays_finite():
+    import torch
+    from vino.models.input_stems import build_input_stem
+    stn = build_input_stem(_stn_cfg("affine_stn"))
+    x = torch.rand(2, 3, 48, 48, requires_grad=False)
+    out = stn(x)
+    assert torch.isfinite(out).all()
+    out.sum().backward()
+    grad = sum(p.grad.abs().sum() for p in stn.parameters() if p.grad is not None)
+    assert float(grad) > 0

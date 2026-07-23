@@ -6,12 +6,17 @@ from .dinov3_backbone import DinoV3Backbone
 from .input_adapter import Conv1x1Adapter, IdentityAdapter
 from .input_stems import build_input_stem
 from .heads import BinaryClassificationHead, LinearClassificationHead, RegressionHead
+from ..transforms.image_transforms import ImageTransformPipeline
 
 class GraphImageModel(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        
+
+        # Fixed/composable image transform applied BEFORE ImageNet normalization (distribution /
+        # local-structure alignment to the pretrained backbone). Empty spec -> identity (no-op).
+        self.image_transform = ImageTransformPipeline(config["model"].get("image_transform"))
+
         # Normalization
         if config["model"]["normalize_lvd_imagenet"]:
             self.normalize = Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
@@ -41,6 +46,7 @@ class GraphImageModel(nn.Module):
             pretrained_path=config["model"]["pretrained_path"],
             pooling=config["model"].get("pooling", "auto"),
             revision=config["model"].get("pretrained_revision"),
+            random_init=bool(config["model"].get("random_init", False)),
         )
         
         emb_dim = self.backbone.output_dim
@@ -69,7 +75,8 @@ class GraphImageModel(nn.Module):
             raise ValueError(f"Unknown head type: {head_type}")
             
     def forward(self, images, valid_token_mask=None):
-        x = self.normalize(images)
+        x = self.image_transform(images)
+        x = self.normalize(x)
         if valid_token_mask is not None:
             input_mask = F.interpolate(valid_token_mask[:, None].float(), size=x.shape[-2:], mode="nearest")
             x = x * input_mask

@@ -2,6 +2,7 @@ n_max: 256
 channels: ["topology", "node_cov", "edge_cov"]
 final_range: [0, 1]
 pad_value: 0.0
+storage: "cropped"
 
 topology:
   mode: "apsp_heat"

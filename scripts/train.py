@@ -21,6 +21,28 @@ from vino.models.freeze import set_frozen_modules_eval
 collate_fn = collate_cached_graphs
 
 
+def trainable_state_dict(model):
+    """State dict of only trainable parameters (those with requires_grad=True).
+
+    Frozen parameters equal their pretrained values in a freshly constructed model, so they do
+    not need to be checkpointed; this avoids writing the identical, large frozen backbone into
+    every run's checkpoint (~87 MB -> <1 MB for a frozen DINOv3 head). Reload with strict=False so
+    the reconstructed model keeps its pretrained frozen weights and only the trained parameters
+    are restored. For a fully trainable backbone (freeze_mode="full") every parameter is trainable,
+    so this saves the complete model unchanged.
+    """
+    trainable = {name for name, p in model.named_parameters() if p.requires_grad}
+    state = model.state_dict()
+    keep = {k: v for k, v in state.items() if k in trainable}
+    # Also persist fitted image-transform statistics (buffers such as z-score mean/std or
+    # percentile bounds). They are not trainable parameters, but a reloaded model must reproduce
+    # the same inference; they are tiny (a handful of floats per channel).
+    for k, v in state.items():
+        if k.startswith("image_transform.") and k not in keep:
+            keep[k] = v
+    return keep
+
+
 def evaluate(model, loader, config_dict, pos_weight=None):
     model_cfg = _cfg_get(config_dict, "model", {})
     task_type = config_dict.get("train", {}).get("task_type", "unknown")
@@ -216,6 +238,17 @@ def main():
     model = model.to(device)
     os.makedirs(out_dir, exist_ok=False)
     print("[debug] model device:", next(model.parameters()).device, flush=True)
+    # Fail-loud confirmation that the configured image transform is actually active, and fit any
+    # train-split statistics (never using val/test data).
+    print(f"[transform] image_transform = {model.image_transform.describe()}", flush=True)
+    if model.image_transform.needs_fit():
+        print("[transform] fitting stateful transform statistics on the training split", flush=True)
+        fit_batches = []
+        for batch in train_loader:
+            fit_batches.append(batch["image"])
+            if len(fit_batches) >= 40:
+                break
+        model.image_transform.fit(fit_batches, device)
     if wandb_run is not None:
         wandb_run.name = "__".join(str(wandb_run.config.get(k, "na")) for k in (
             "backbone_variant", "tuning_profile", "channel_set", "resource_profile",
@@ -258,7 +291,7 @@ def main():
     )
     
     # Pre-save a best checkpoint in case epochs=0
-    torch.save(model.state_dict(), os.path.join(out_dir, "checkpoint_best.pt"))
+    torch.save(trainable_state_dict(model), os.path.join(out_dir, "checkpoint_best.pt"))
     
     printed_first_batch_debug = False
     
@@ -332,7 +365,7 @@ def main():
                 
         if is_best:
             best_epoch = epoch
-            torch.save(model.state_dict(), os.path.join(out_dir, "checkpoint_best.pt"))
+            torch.save(trainable_state_dict(model), os.path.join(out_dir, "checkpoint_best.pt"))
             
         print(print_msg, flush=True)
         metrics_file.write(json.dumps(log_entry) + "\n")
@@ -345,12 +378,12 @@ def main():
         
     metrics_file.close()
         
-    torch.save(model.state_dict(), os.path.join(out_dir, "checkpoint_last.pt"))
+    torch.save(trainable_state_dict(model), os.path.join(out_dir, "checkpoint_last.pt"))
     
     import datetime
     
     if os.path.exists(os.path.join(out_dir, "checkpoint_best.pt")):
-        model.load_state_dict(torch.load(os.path.join(out_dir, "checkpoint_best.pt"), map_location=device, weights_only=False))
+        model.load_state_dict(torch.load(os.path.join(out_dir, "checkpoint_best.pt"), map_location=device, weights_only=False), strict=False)
         
     val_final_metrics = None
     if val_loader is not None:

@@ -33,7 +33,9 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = GraphImageModel(resolved).to(device)
-    model.load_state_dict(torch.load(args.checkpoint, map_location=device, weights_only=True))
+    # Checkpoints store only trained parameters (frozen backbone stays pretrained from
+    # construction), so load non-strictly and keep the pretrained weights for missing keys.
+    model.load_state_dict(torch.load(args.checkpoint, map_location=device, weights_only=True), strict=False)
     result = {"split": args.split, "num_samples": len(dataset), **evaluate(model, loader, resolved)}
     rendered = json.dumps(result, indent=2)
     print(rendered)
